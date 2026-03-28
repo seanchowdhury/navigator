@@ -18,7 +18,10 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "paths": {
+      "navigator_core": ["./navigator_core/pkg/navigator_core.d.ts"]
+    }
   },
   "include": ["src"]
 }
