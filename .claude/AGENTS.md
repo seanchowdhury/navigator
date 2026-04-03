@@ -1,0 +1,1 @@
+No code generation for this project. I only want the agent to answer questions and provide advice.

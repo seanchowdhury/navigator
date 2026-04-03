@@ -1,0 +1,18 @@
+/home/schowdhury/Projects/navigator/target/debug/deps/osmpbf-71672cfe471a1557.d: /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/lib.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/blob.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/block.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/dense.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/elements.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/error.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/indexed.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/mmap_blob.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/reader.rs /home/schowdhury/Projects/navigator/target/debug/build/osmpbf-38407feb71555151/out/mod.rs /home/schowdhury/Projects/navigator/target/debug/build/osmpbf-38407feb71555151/out/fileformat.rs /home/schowdhury/Projects/navigator/target/debug/build/osmpbf-38407feb71555151/out/osmformat.rs
+
+/home/schowdhury/Projects/navigator/target/debug/deps/libosmpbf-71672cfe471a1557.rmeta: /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/lib.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/blob.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/block.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/dense.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/elements.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/error.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/indexed.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/mmap_blob.rs /home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/reader.rs /home/schowdhury/Projects/navigator/target/debug/build/osmpbf-38407feb71555151/out/mod.rs /home/schowdhury/Projects/navigator/target/debug/build/osmpbf-38407feb71555151/out/fileformat.rs /home/schowdhury/Projects/navigator/target/debug/build/osmpbf-38407feb71555151/out/osmformat.rs
+
+/home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/lib.rs:
+/home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/blob.rs:
+/home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/block.rs:
+/home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/dense.rs:
+/home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/elements.rs:
+/home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/error.rs:
+/home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/indexed.rs:
+/home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/mmap_blob.rs:
+/home/schowdhury/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/osmpbf-0.3.8/src/reader.rs:
+/home/schowdhury/Projects/navigator/target/debug/build/osmpbf-38407feb71555151/out/mod.rs:
+/home/schowdhury/Projects/navigator/target/debug/build/osmpbf-38407feb71555151/out/fileformat.rs:
+/home/schowdhury/Projects/navigator/target/debug/build/osmpbf-38407feb71555151/out/osmformat.rs:
+
+# env-dep:OUT_DIR=/home/schowdhury/Projects/navigator/target/debug/build/osmpbf-38407feb71555151/out

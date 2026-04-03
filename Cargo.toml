@@ -1,0 +1,10 @@
+[workspace]
+resolver = "3"
+members = [
+  "navigator_core",
+  "navigator_offline",
+  "navigator_common"
+]
+
+[profile.release]
+opt-level = "s"

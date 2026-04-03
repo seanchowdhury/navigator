@@ -1,0 +1,1 @@
+wasm_bindgen::JsValue: std::convert::From<std::boxed::Box<std::string::String, dyn std::error::Error>>
