@@ -4,9 +4,9 @@ https://navigator.seanc.how
 
 This project is an attempt to create a serverless float planner for the Village Community Boathouse and other NYC based boathouses.
 
-I originally tried this project when I first learned web development and failed miserably because calculating routes in bodies of water is hard thanks to their fluid nature (🥁). At the time I created a node at the coordinates the user would click on and created a graph that would radially fan out from that point. I then made a request to Google Map's images API, painted the map into Canvas and checked whether tha color of the pixel at that coordinate was blue, if so I assumed it was water.
+I originally tried this project when I first learned web development and failed miserably because calculating routes in bodies of water is hard thanks to their fluid nature (🥁). At the time I created a node at the first coordinate the user would select and created a graph that would radially fan out from that point to find the next point. I then made a request to Google Map's images API, painted the map into Canvas and checked whether the color of the pixel at that coordinate was blue, if so I assumed it was water.
 
-In retrospect very naive but who knows I might look back a few years from now and consider this not very sophisticated.
+In retrospect very naive but I might look back a few years from now and consider this not very sophisticated.
 
 ## Why?
 
