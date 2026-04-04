@@ -8,13 +8,11 @@
   "files": [
     "navigator_core_bg.wasm",
     "navigator_core.js",
-    "navigator_core_bg.js",
     "navigator_core.d.ts"
   ],
   "main": "navigator_core.js",
   "types": "navigator_core.d.ts",
   "sideEffects": [
-    "./navigator_core.js",
     "./snippets/*"
   ]
 }

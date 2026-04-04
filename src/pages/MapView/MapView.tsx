@@ -5,9 +5,17 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Waypoint } from "./MapView.types";
 import RouteInfo from "./components/RouteInfo";
 import {
-  calculateTidalRoute,
+  fetchTidalData,
+  recomputeTidalRoute,
   TidalRouteResult,
+  TidalRouteCache,
+  VesselType,
 } from "../../services/tidalRoute";
+import {
+  fetchWindForecast,
+  interpolateWind,
+  WindForecast,
+} from "../../services/nws";
 
 const longitude = -74.0117;
 const latitude = 40.7292;
@@ -40,6 +48,12 @@ function onLoad(e: MapLibreEvent) {
   });
 }
 
+function parseDeparture(timeStr: string, dateStr: string): Date {
+  const [hours, minutes] = timeStr.split(":").map(Number);
+  const [year, month, day] = dateStr.split("-").map(Number);
+  return new Date(year, month - 1, day, hours, minutes, 0, 0);
+}
+
 export default function MapView() {
   const workerRef = useRef<Worker | null>(null);
 
@@ -63,16 +77,43 @@ export default function MapView() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   });
+  const [vesselType, setVesselType] = useState<VesselType>("whitehall_gig");
+  const [weather, setWeather] = useState<WindForecast | null>(null);
 
-  const recalcTidal = useCallback(
-    async (coords: number[][], speed: number, timeStr: string, dateStr: string) => {
+  // Cached API data — only re-fetched when route or date changes
+  const tidalCacheRef = useRef<TidalRouteCache | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const fetchWeather = useCallback(
+    async (timeStr: string, dateStr: string) => {
+      try {
+        const time = parseDeparture(timeStr, dateStr);
+        const forecasts = await fetchWindForecast(latitude, longitude);
+        setWeather(interpolateWind(forecasts, time));
+      } catch {
+        setWeather(null);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    fetchWeather(departureTime, departureDate);
+  }, [departureTime, departureDate, fetchWeather]);
+
+  /**
+   * Fetch tidal/wind data from APIs — only needed when route coords or date changes.
+   * After fetching, recomputes the result with current params.
+   */
+  const fetchAndCompute = useCallback(
+    async (coords: number[][], dateStr: string, timeStr: string, speed: number, vessel: VesselType) => {
       if (coords.length < 2) return;
       setTidalLoading(true);
       try {
-        const [hours, minutes] = timeStr.split(":").map(Number);
-        const [year, month, day] = dateStr.split("-").map(Number);
-        const departure = new Date(year, month - 1, day, hours, minutes, 0, 0);
-        const result = await calculateTidalRoute(coords, departure, speed);
+        const departure = parseDeparture(timeStr, dateStr);
+        const cache = await fetchTidalData(coords, departure);
+        tidalCacheRef.current = cache;
+        const result = recomputeTidalRoute(cache, departure, speed, vessel);
         setTidalResult(result);
       } catch (e) {
         console.error("Tidal calculation failed:", e);
@@ -82,6 +123,32 @@ export default function MapView() {
       }
     },
     [],
+  );
+
+  /**
+   * Recompute from cached data — no API calls.
+   * Used when time, speed, or vessel type changes.
+   */
+  const recompute = useCallback(
+    (timeStr: string, dateStr: string, speed: number, vessel: VesselType) => {
+      const cache = tidalCacheRef.current;
+      if (!cache) return;
+      const departure = parseDeparture(timeStr, dateStr);
+      const result = recomputeTidalRoute(cache, departure, speed, vessel);
+      setTidalResult(result);
+    },
+    [],
+  );
+
+  /** Debounced recompute — for slider and input changes */
+  const debouncedRecompute = useCallback(
+    (timeStr: string, dateStr: string, speed: number, vessel: VesselType) => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        recompute(timeStr, dateStr, speed, vessel);
+      }, 300);
+    },
+    [recompute],
   );
 
   useEffect(() => {
@@ -117,7 +184,8 @@ export default function MapView() {
           ],
         });
 
-        recalcTidal(routeCoordsRef.current, speedKnots, departureTime, departureDate);
+        // Route changed — need fresh API data
+        fetchAndCompute(routeCoordsRef.current, departureDate, departureTime, speedKnots, vesselType);
       };
     }
   }, [routeMap]);
@@ -153,6 +221,7 @@ export default function MapView() {
     setWaypoints([]);
     setTotalDistance(0);
     setTidalResult(null);
+    tidalCacheRef.current = null;
     routeCoordsRef.current = [];
     (routeMap?.getSource("route") as GeoJSONSource)?.setData({
       type: "FeatureCollection",
@@ -170,18 +239,25 @@ export default function MapView() {
         speedKnots={speedKnots}
         onSpeedChange={(speed) => {
           setSpeedKnots(speed);
-          recalcTidal(routeCoordsRef.current, speed, departureTime, departureDate);
+          debouncedRecompute(departureTime, departureDate, speed, vesselType);
         }}
         departureTime={departureTime}
         onDepartureTimeChange={(time) => {
           setDepartureTime(time);
-          recalcTidal(routeCoordsRef.current, speedKnots, time, departureDate);
+          debouncedRecompute(time, departureDate, speedKnots, vesselType);
         }}
         departureDate={departureDate}
         onDepartureDateChange={(date) => {
           setDepartureDate(date);
-          recalcTidal(routeCoordsRef.current, speedKnots, departureTime, date);
+          // Date change needs fresh API data
+          fetchAndCompute(routeCoordsRef.current, date, departureTime, speedKnots, vesselType);
         }}
+        vesselType={vesselType}
+        onVesselTypeChange={(vessel) => {
+          setVesselType(vessel);
+          recompute(departureTime, departureDate, speedKnots, vessel);
+        }}
+        weather={weather}
       />
       <Map
         id="routeMap"
@@ -191,15 +267,17 @@ export default function MapView() {
         onLoad={(e) => onLoad(e)}
         onClick={handleClick}
       >
-        {waypoints.map((waypoint) => {
-          return (
-            <Marker
-              key={waypoint.id}
-              longitude={waypoint.lng}
-              latitude={waypoint.lat}
-            />
-          );
-        })}
+        {waypoints.map((waypoint, i) => (
+          <Marker
+            key={waypoint.id}
+            longitude={waypoint.lng}
+            latitude={waypoint.lat}
+          >
+            <div className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold shadow">
+              {i + 1}
+            </div>
+          </Marker>
+        ))}
       </Map>
     </div>
   );

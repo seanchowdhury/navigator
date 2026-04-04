@@ -25,7 +25,7 @@ pub fn find_route(start_lat: f64, start_lng: f64, end_lat: f64, end_lng: f64) ->
     let closest_start = closest_node(&graph, start_lat, start_lng);
     let closest_end = closest_node(&graph, end_lat, end_lng);
 
-    match dijkstra(&graph, &adj, closest_start, closest_end) {
+    match astar(&graph, &adj, closest_start, closest_end) {
         Some((path, total_distance)) => {
             let mut result: Vec<f64> = path.iter()
                 .flat_map(|&i| vec![graph.nodes[i].lat, graph.nodes[i].lng])
@@ -54,37 +54,53 @@ const SHORE_PENALTY: f32 = 50.0;
 /// Shore distance (meters) below which the penalty kicks in.
 const SHORE_THRESHOLD: f32 = 200.0;
 
-fn dijkstra(graph: &Graph, adj: &[Vec<(u32, f32)>], start: usize, end: usize) -> Option<(Vec<usize>, f32)> {
+fn haversine(lat1: f64, lng1: f64, lat2: f64, lng2: f64) -> f32 {
+    let r = 6_371_000.0_f64; // Earth radius in meters
+    let dlat = (lat2 - lat1).to_radians();
+    let dlng = (lng2 - lng1).to_radians();
+    let a = (dlat / 2.0).sin().powi(2)
+        + lat1.to_radians().cos() * lat2.to_radians().cos() * (dlng / 2.0).sin().powi(2);
+    (r * 2.0 * a.sqrt().asin()) as f32
+}
+
+fn astar(graph: &Graph, adj: &[Vec<(u32, f32)>], start: usize, end: usize) -> Option<(Vec<usize>, f32)> {
     let n = adj.len();
-    let mut dist = vec![f32::INFINITY; n];
+    let goal_lat = graph.nodes[end].lat;
+    let goal_lng = graph.nodes[end].lng;
+
+    let mut g_score = vec![f32::INFINITY; n];
     let mut prev = vec![usize::MAX; n];
-    dist[start] = 0.0;
+    g_score[start] = 0.0;
 
+    let h_start = haversine(graph.nodes[start].lat, graph.nodes[start].lng, goal_lat, goal_lng);
     let mut heap = BinaryHeap::new();
-    heap.push(Reverse((OrderedFloat(0.0_f32), start)));
+    heap.push(Reverse((OrderedFloat(h_start), start)));
 
-    while let Some(Reverse((d, u))) = heap.pop() {
+    while let Some(Reverse((_f, u))) = heap.pop() {
         if u == end { break; }
-        if *d > dist[u] { continue; }
+        let g_u = g_score[u];
+        if g_u == f32::INFINITY { continue; }
 
         for &(v, w) in &adj[u] {
-            let sd = graph.nodes[v as usize].shore_distance;
+            let vi = v as usize;
+            let sd = graph.nodes[vi].shore_distance;
             let penalty = if sd < SHORE_THRESHOLD {
                 SHORE_PENALTY * (1.0 - sd / SHORE_THRESHOLD)
             } else {
                 0.0
             };
-            let nd = *d + w + penalty;
-            if nd < dist[v as usize] {
-                dist[v as usize] = nd;
-                prev[v as usize] = u;
-                heap.push(Reverse((OrderedFloat(nd), v as usize)));
+            let tentative_g = g_u + w + penalty;
+            if tentative_g < g_score[vi] {
+                g_score[vi] = tentative_g;
+                prev[vi] = u;
+                let h = haversine(graph.nodes[vi].lat, graph.nodes[vi].lng, goal_lat, goal_lng);
+                heap.push(Reverse((OrderedFloat(tentative_g + h), vi)));
             }
         }
     }
 
-    if dist[end] == f32::INFINITY { return None; }
-    let total_distance = dist[end];
+    if g_score[end] == f32::INFINITY { return None; }
+    let total_distance = g_score[end];
     let mut path = vec![end];
     let mut cur = end;
     while cur != start {
