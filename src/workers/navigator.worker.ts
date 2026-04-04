@@ -1,15 +1,12 @@
-import * as wasm from "navigator_core";
+import { find_route } from "navigator_core";
 import { Waypoint } from "../pages/MapView/MapView.types";
 
-const ready = wasm.default();
-
 self.onmessage = async (e: MessageEvent<Waypoint[]>) => {
-  await ready;
   const startLat = e.data[0].lat;
   const startLng = e.data[0].lng;
   const endLat = e.data[1].lat;
   const endLng = e.data[1].lng;
-  const result = wasm.find_route(startLat, startLng, endLat, endLng);
+  const result = find_route(startLat, startLng, endLat, endLng);
   const dataArray = Array.from(result);
   const distance = dataArray.pop()!;
   const smoothed = smoothCoords(dataArray, 5);
