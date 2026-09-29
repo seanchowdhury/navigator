@@ -50,15 +50,51 @@ export interface TidalRouteResult {
   totalDurationWithoutEffects: number;
   tideDeltaMinutes: number;
   windDeltaMinutes: number;
-  /** Route length (nm) the timings are based on. */
+  /** Route length (nm) the timings are based on, including the return leg. */
   totalDistanceNm: number;
+  /** Time spent rowing; totalDurationHours = movingHours + stopHours. */
+  movingHours: number;
+  stopHours: number;
+  /** Arrival at every waypoint after the start, in trip order (out, then back). */
+  itinerary: ItineraryStop[];
   /** Segments where current (and wind) outrun the boat, in route order. */
   stalls: TidalSegment[];
 }
 
+export interface ItineraryStop {
+  waypointIndex: number;
+  direction: "out" | "back";
+  arrival: Date;
+  stopMinutes: number;
+  /** arrival + stopMinutes. */
+  departure: Date;
+  /** A stall earlier in the trip makes these times lower bounds. */
+  lowerBound: boolean;
+}
+
+/** Everything about the trip's shape other than speed, vessel and departure time. */
+export interface TripOptions {
+  roundTrip: boolean;
+  /**
+   * Stop (minutes) at each waypoint on the way out, indexed by waypoint. On a round
+   * trip the last waypoint's value is the turnaround stop; on a one-way trip it's ignored.
+   */
+  stopMinutes: number[];
+  /** Stop (minutes) at each waypoint on the way back. Round trips only. */
+  returnStopMinutes: number[];
+}
+
+export const ONE_WAY_NO_STOPS: TripOptions = {
+  roundTrip: false,
+  stopMinutes: [],
+  returnStopMinutes: [],
+};
+
 /** Cached data from API fetches — can be reused for recomputes */
 export interface TidalRouteCache {
   simplified: number[][];
+  /** Index into `simplified` of each waypoint, in waypoint order. */
+  waypointVertices: number[];
   /** Length (nm) of the full route between each pair of simplified points. */
   segmentDistancesNm: number[];
   stations: CurrentStation[];
@@ -73,9 +109,11 @@ export interface TidalRouteCache {
 export async function fetchTidalData(
   routeCoords: number[][],
   date: Date,
+  /** Index into routeCoords of each waypoint. Defaults to just the two ends. */
+  waypointCoordIndices: number[] = [0, routeCoords.length - 1],
 ): Promise<TidalRouteCache> {
   const stations = await fetchCurrentStations();
-  const keptIndices = simplifyRoute(routeCoords, 20);
+  const { keptIndices, waypointVertices } = simplifyByStretch(routeCoords, waypointCoordIndices, 20);
   const simplified = keptIndices.map((i) => routeCoords[i]);
   const segmentDistancesNm = keptIndices
     .slice(1)
@@ -97,7 +135,7 @@ export async function fetchTidalData(
     fetchWindForecast(windLat, windLng).catch((): WindForecast[] => []),
   ]);
 
-  return { simplified, segmentDistancesNm, stations, predictions, windForecasts };
+  return { simplified, waypointVertices, segmentDistancesNm, stations, predictions, windForecasts };
 }
 
 /**
@@ -109,21 +147,60 @@ export function recomputeTidalRoute(
   departureTime: Date,
   vesselSpeedKnots: number,
   vesselType: VesselType = "whitehall_gig",
+  trip: TripOptions = ONE_WAY_NO_STOPS,
 ): TidalRouteResult {
-  const { simplified, segmentDistancesNm, stations, predictions, windForecasts } = cache;
+  const { simplified, waypointVertices, segmentDistancesNm, stations, predictions, windForecasts } = cache;
+  const lastWaypoint = waypointVertices.length - 1;
+  // Usually one waypoint per vertex, but two waypoints can snap to the same node.
+  const waypointsAtVertex = new Map<number, number[]>();
+  waypointVertices.forEach((vertex, w) => {
+    waypointsAtVertex.set(vertex, [...(waypointsAtVertex.get(vertex) ?? []), w]);
+  });
+
+  // Outbound legs, then (for a round trip) the same legs back in reverse.
+  type Leg = { from: number[]; to: number[]; distanceNm: number; direction: "out" | "back"; endWaypoints: number[] };
+  const legs: Leg[] = simplified.slice(1).map((to, i) => ({
+    from: simplified[i],
+    to,
+    distanceNm: segmentDistancesNm[i],
+    direction: "out",
+    // Skip waypoint 0 when it shares the first vertex; it's the start, not an arrival.
+    endWaypoints: (waypointsAtVertex.get(i + 1) ?? []).filter((w) => w > 0),
+  }));
+  if (trip.roundTrip) {
+    for (let i = simplified.length - 2; i >= 0; i--) {
+      legs.push({
+        from: simplified[i + 1],
+        to: simplified[i],
+        distanceNm: segmentDistancesNm[i],
+        direction: "back",
+        endWaypoints: [...(waypointsAtVertex.get(i) ?? [])].reverse(),
+      });
+    }
+  }
+
+  const stopAt = (w: number, direction: "out" | "back") => {
+    let minutes = 0;
+    if (direction === "out") {
+      // Arriving at the last waypoint ends a one-way trip; on a round trip it's the turnaround.
+      if (w < lastWaypoint || trip.roundTrip) minutes = trip.stopMinutes[w] ?? 0;
+    } else if (w > 0) {
+      minutes = trip.returnStopMinutes[w] ?? 0;
+    }
+    return Number.isFinite(minutes) ? Math.max(0, minutes) : 0;
+  };
 
   const segments: TidalSegment[] = [];
+  const itinerary: ItineraryStop[] = [];
   let currentTime = departureTime.getTime();
   let totalWithoutEffects = 0;
   let tideOnlyDelta = 0;
+  let stopHours = 0;
+  let stalledSoFar = false;
 
-  for (let i = 0; i < simplified.length - 1; i++) {
-    const from = simplified[i];
-    const to = simplified[i + 1];
-
-    const segmentBearing = bearing(from[1], from[0], to[1], to[0]);
+  for (const { from, to, distanceNm, direction, endWaypoints } of legs) {
     // Bearing uses the straight chord; distance follows the actual route.
-    const distanceNm = segmentDistancesNm[i];
+    const segmentBearing = bearing(from[1], from[0], to[1], to[0]);
 
     const midLat = (from[1] + to[1]) / 2;
     const midLng = (from[0] + to[0]) / 2;
@@ -162,6 +239,8 @@ export function recomputeTidalRoute(
     totalWithoutEffects += baseDuration;
     tideOnlyDelta += tideOnlyDuration - baseDuration;
 
+    const stalled = netSpeed < STALL_THRESHOLD_KNOTS;
+    stalledSoFar ||= stalled;
     segments.push({
       from,
       to,
@@ -171,32 +250,117 @@ export function recomputeTidalRoute(
       windEffect,
       effectiveSpeed,
       netSpeed,
-      stalled: netSpeed < STALL_THRESHOLD_KNOTS,
+      stalled,
       durationHours,
       stationName: station.name,
       startTime: new Date(currentTime),
     });
 
     currentTime += durationHours * 3600 * 1000;
+
+    for (const endWaypoint of endWaypoints) {
+      const stopMinutes = stopAt(endWaypoint, direction);
+      const arrival = new Date(currentTime);
+      currentTime += stopMinutes * 60 * 1000;
+      stopHours += stopMinutes / 60;
+      itinerary.push({
+        waypointIndex: endWaypoint,
+        direction,
+        arrival,
+        stopMinutes,
+        departure: new Date(currentTime),
+        lowerBound: stalledSoFar,
+      });
+    }
   }
 
-  const totalDurationHours = segments.reduce(
-    (sum, s) => sum + s.durationHours,
-    0,
-  );
-  const totalDelta = totalDurationHours - totalWithoutEffects;
+  const movingHours = sumHours(segments);
+  // Tide/wind effects compare moving time only; stops aren't an "effect".
+  const totalDelta = movingHours - totalWithoutEffects;
   const tideDeltaMinutes = tideOnlyDelta * 60;
   const windDeltaMinutes = (totalDelta - tideOnlyDelta) * 60;
 
   return {
     segments,
-    totalDurationHours,
+    totalDurationHours: movingHours + stopHours,
     totalDurationWithoutEffects: totalWithoutEffects,
     tideDeltaMinutes,
     windDeltaMinutes,
     totalDistanceNm: segments.reduce((sum, s) => sum + s.distanceNm, 0),
+    movingHours,
+    stopHours,
+    itinerary,
     stalls: segments.filter((s) => s.stalled),
   };
+}
+
+export interface DepartureOption {
+  departure: Date;
+  durationHours: number;
+  /** Some leg can't make headway, so durationHours is only a lower bound. */
+  stalled: boolean;
+}
+
+export interface DepartureSweep {
+  options: DepartureOption[];
+  /** Fastest departure with no stalled legs. */
+  best: DepartureOption | null;
+  /** Contiguous departures around `best` within the tolerance of its duration. */
+  bestWindow: { start: Date; end: Date } | null;
+}
+
+/**
+ * Evaluates every departure between windowStart and windowEnd (inclusive) in
+ * stepMinutes increments. Pure math over cached data, so it's cheap to rerun.
+ */
+export function sweepDepartures(
+  cache: TidalRouteCache,
+  windowStart: Date,
+  windowEnd: Date,
+  vesselSpeedKnots: number,
+  vesselType: VesselType,
+  trip: TripOptions,
+  stepMinutes = 15,
+  toleranceMinutes = 5,
+): DepartureSweep {
+  const options: DepartureOption[] = [];
+  const stepMs = stepMinutes * 60 * 1000;
+  for (let t = windowStart.getTime(); t <= windowEnd.getTime(); t += stepMs) {
+    const departure = new Date(t);
+    const result = recomputeTidalRoute(cache, departure, vesselSpeedKnots, vesselType, trip);
+    options.push({
+      departure,
+      durationHours: result.totalDurationHours,
+      stalled: result.stalls.length > 0,
+    });
+  }
+
+  let bestIndex = -1;
+  options.forEach((option, i) => {
+    if (option.stalled) return;
+    if (bestIndex === -1 || option.durationHours < options[bestIndex].durationHours) {
+      bestIndex = i;
+    }
+  });
+  if (bestIndex === -1) return { options, best: null, bestWindow: null };
+
+  const best = options[bestIndex];
+  const limit = best.durationHours + toleranceMinutes / 60;
+  const withinTolerance = (o: DepartureOption) => !o.stalled && o.durationHours <= limit;
+  let first = bestIndex;
+  let last = bestIndex;
+  while (first > 0 && withinTolerance(options[first - 1])) first--;
+  while (last < options.length - 1 && withinTolerance(options[last + 1])) last++;
+
+  return {
+    options,
+    best,
+    bestWindow: { start: options[first].departure, end: options[last].departure },
+  };
+}
+
+function sumHours(segments: TidalSegment[]): number {
+  return segments.reduce((sum, s) => sum + s.durationHours, 0);
 }
 
 /** Returns the indices of the route points kept as segment endpoints. */
@@ -210,6 +374,33 @@ function simplifyRoute(coords: number[][], maxSegments: number): number[] {
   }
   result.push(coords.length - 1);
   return result;
+}
+
+/**
+ * Simplifies each waypoint-to-waypoint stretch separately so every waypoint is kept
+ * as a segment endpoint. The segment budget is shared out by stretch length (each
+ * stretch gets at least one segment).
+ */
+function simplifyByStretch(
+  coords: number[][],
+  waypointCoordIndices: number[],
+  maxSegments: number,
+): { keptIndices: number[]; waypointVertices: number[] } {
+  const totalPoints = Math.max(coords.length - 1, 1);
+  const keptIndices = [waypointCoordIndices[0]];
+  const waypointVertices = [0];
+  for (let w = 1; w < waypointCoordIndices.length; w++) {
+    const start = waypointCoordIndices[w - 1];
+    const end = waypointCoordIndices[w];
+    const stretch = coords.slice(start, end + 1);
+    const budget = Math.max(1, Math.round((maxSegments * (end - start)) / totalPoints));
+    // Skip the stretch's first point; it's the previous stretch's last.
+    simplifyRoute(stretch, budget)
+      .slice(1)
+      .forEach((i) => keptIndices.push(start + i));
+    waypointVertices.push(keptIndices.length - 1);
+  }
+  return { keptIndices, waypointVertices };
 }
 
 /** Length (nm) of the route polyline from coords[start] to coords[end]. */

@@ -1,15 +1,20 @@
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  DepartureSweep,
   TidalRouteResult,
   TidalSegment,
   VesselType,
   VESSEL_LABELS,
 } from "../../../services/tidalRoute";
 import { WindForecast } from "../../../services/nws";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Clock } from "lucide-react";
+import BestDeparture from "./BestDeparture";
+import Itinerary from "./Itinerary";
+import { Waypoint } from "../MapView.types";
 
 function formatDistance(meters: number) {
   const miles = meters / 1609.344;
@@ -54,6 +59,17 @@ function getStallStretches(segments: TidalSegment[]): TidalSegment[][] {
   return stretches;
 }
 
+/** Stop minutes that apply to the trip (mirrors the stop rules in recomputeTidalRoute). */
+function totalStopMinutes(waypoints: Waypoint[], roundTrip: boolean) {
+  const last = waypoints.length - 1;
+  return waypoints.reduce((sum, w, i) => {
+    if (i === 0) return sum;
+    const out = i < last || roundTrip ? w.stopMinutes : 0;
+    const back = roundTrip && i < last ? w.returnStopMinutes : 0;
+    return sum + out + back;
+  }, 0);
+}
+
 function degreesToCompass(deg: number): string {
   const dirs = [
     "N",
@@ -90,6 +106,11 @@ interface RouteInfoProps {
   vesselType: VesselType;
   onVesselTypeChange: (vessel: VesselType) => void;
   weather: WindForecast | null;
+  onSweepDepartures: (windowStart: string, windowEnd: string) => DepartureSweep | null;
+  roundTrip: boolean;
+  onRoundTripChange: (roundTrip: boolean) => void;
+  waypoints: Waypoint[];
+  onStopChange: (waypointId: string, direction: "out" | "back", minutes: number) => void;
 }
 
 export default function RouteInfo({
@@ -106,10 +127,20 @@ export default function RouteInfo({
   vesselType,
   onVesselTypeChange,
   weather,
+  onSweepDepartures,
+  roundTrip,
+  onRoundTripChange,
+  waypoints,
+  onStopChange,
 }: RouteInfoProps) {
+  const [showBestDeparture, setShowBestDeparture] = useState(false);
   // Once tides are computed, show the same route length the timings are based on.
-  const displayDistance = tidalResult ? tidalResult.totalDistanceNm * 1852 : totalDistance;
-  const baseTravelHours = getTravelHours(totalDistance, speedKnots);
+  // totalDistance is the drawn (outbound) route; a round trip covers it twice.
+  const tripDistance = roundTrip ? totalDistance * 2 : totalDistance;
+  const displayDistance = tidalResult ? tidalResult.totalDistanceNm * 1852 : tripDistance;
+  const fallbackStopHours = totalStopMinutes(waypoints, roundTrip) / 60;
+  const baseTravelHours = getTravelHours(tripDistance, speedKnots) + fallbackStopHours;
+  const stopHours = tidalResult ? tidalResult.stopHours : fallbackStopHours;
   const adjustedHours = tidalResult?.totalDurationHours ?? baseTravelHours;
   const tideDelta = tidalResult?.tideDeltaMinutes ?? 0;
   const windDelta = tidalResult?.windDeltaMinutes ?? 0;
@@ -122,7 +153,10 @@ export default function RouteInfo({
   const durationPrefix = stallStretches.length > 0 ? "≥ " : "";
 
   return (
-    <Card className="absolute top-4 left-4 z-10 w-84" style={{ padding: 10 }}>
+    <Card
+      className="absolute top-4 left-4 z-10 w-84 max-h-[calc(100dvh-2rem)] overflow-auto overscroll-contain"
+      style={{ padding: 10 }}
+    >
       <CardHeader className="pb-2">
         <CardTitle>Float Plan</CardTitle>
       </CardHeader>
@@ -154,6 +188,24 @@ export default function RouteInfo({
                 className="w-28 text-right"
               />
             </div>
+            <Button
+              size="sm"
+              variant={showBestDeparture ? "default" : "outline"}
+              className="w-full"
+              disabled={!hasRoute}
+              title={hasRoute ? undefined : "Add a route first"}
+              onClick={() => setShowBestDeparture((open) => !open)}
+            >
+              <Clock size={14} />
+              {showBestDeparture ? "Hide best time" : "Find best time"}
+            </Button>
+            {showBestDeparture && hasRoute && (
+              <BestDeparture
+                onSweep={onSweepDepartures}
+                onUseTime={onDepartureTimeChange}
+                departureTime={departureTime}
+              />
+            )}
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Vessel</span>
               <select
@@ -229,6 +281,15 @@ export default function RouteInfo({
               <div className="font-bold text-sm uppercase tracking-wide text-foreground mb-2">
                 Route
               </div>
+              <label className="flex justify-between items-center cursor-pointer">
+                <span className="text-muted-foreground">Round trip</span>
+                <input
+                  type="checkbox"
+                  checked={roundTrip}
+                  onChange={(e) => onRoundTripChange(e.target.checked)}
+                  className="h-4 w-4 accent-blue-600 cursor-pointer"
+                />
+              </label>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Distance</span>
                 <span className="font-medium">
@@ -240,15 +301,26 @@ export default function RouteInfo({
                 <span className="font-medium">
                   {durationPrefix}
                   {formatDuration(adjustedHours)}
+                  {stopHours > 0 && (
+                    <span className="text-muted-foreground font-normal"> incl. {formatDuration(stopHours)} stopped</span>
+                  )}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Est. Arrival</span>
+                <span className="text-muted-foreground">{roundTrip ? "Est. Return" : "Est. Arrival"}</span>
                 <span className="font-medium">
                   {durationPrefix}
                   {getEndTime(departureTime, adjustedHours)}
                 </span>
               </div>
+
+              <Itinerary
+                waypoints={waypoints}
+                roundTrip={roundTrip}
+                departureTime={new Date(`${departureDate}T${departureTime}`)}
+                stops={tidalResult && !tidalLoading ? tidalResult.itinerary : null}
+                onStopChange={onStopChange}
+              />
 
               {tidalLoading && (
                 <div className="text-xs text-muted-foreground italic">

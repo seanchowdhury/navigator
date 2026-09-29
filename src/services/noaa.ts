@@ -63,7 +63,8 @@ export async function fetchCurrentPredictions(
     `?station=${stationId}` +
     `&product=currents_predictions` +
     `&begin_date=${dateStr}` +
-    `&range=24` +
+    // 48h so late departures (and the best-time sweep) still have data past midnight.
+    `&range=48` +
     `&interval=6` +
     `&units=english` +
     `&time_zone=lst_ldt` +

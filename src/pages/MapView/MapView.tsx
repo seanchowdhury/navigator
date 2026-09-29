@@ -7,15 +7,17 @@ import {
   MapLibreEvent,
   Point as PointLike,
 } from "maplibre-gl";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Waypoint, GraphNode, GraphEdge } from "./MapView.types";
 import RouteInfo from "./components/RouteInfo";
 import GraphEditor, { GraphMode, GraphSelection } from "./components/GraphEditor";
 import {
   fetchTidalData,
   recomputeTidalRoute,
+  sweepDepartures,
   TidalRouteResult,
   TidalRouteCache,
+  TripOptions,
   VesselType,
 } from "../../services/tidalRoute";
 import {
@@ -149,7 +151,8 @@ export default function MapView() {
 
   const routeCoordsRef = useRef<number[][]>([]);
   const [totalDistance, setTotalDistance] = useState(0);
-  const [tidalResult, setTidalResult] = useState<TidalRouteResult | null>(null);
+  // Waypoint positions within routeCoordsRef, so stops line up with the route.
+  const waypointCoordIndicesRef = useRef<number[]>([]);
   const [tidalLoading, setTidalLoading] = useState(false);
   const [speedKnots, setSpeedKnots] = useState(3);
   const [departureTime, setDepartureTime] = useState(() =>
@@ -166,6 +169,12 @@ export default function MapView() {
   });
   const [vesselType, setVesselType] = useState<VesselType>("whitehall_gig");
   const [weather, setWeather] = useState<WindForecast | null>(null);
+  const [roundTrip, setRoundTrip] = useState(false);
+
+  // Latest date, for the worker's onmessage (created once) which would otherwise
+  // capture the initial value.
+  const departureDateRef = useRef(departureDate);
+  departureDateRef.current = departureDate;
 
   // --- Water graph view/edit state ---
   const graphNodesRef = useRef<Map<number, GraphNode>>(new Map());
@@ -190,8 +199,8 @@ export default function MapView() {
   }, []);
 
   // Cached API data — only re-fetched when route or date changes
-  const tidalCacheRef = useRef<TidalRouteCache | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [tidalCache, setTidalCache] = useState<TidalRouteCache | null>(null);
+  const fetchIdRef = useRef(0);
 
   const fetchWeather = useCallback(
     async (timeStr: string, dateStr: string) => {
@@ -210,54 +219,55 @@ export default function MapView() {
     fetchWeather(departureTime, departureDate);
   }, [departureTime, departureDate, fetchWeather]);
 
-  /**
-   * Fetch tidal/wind data from APIs — only needed when route coords or date changes.
-   * After fetching, recomputes the result with current params.
-   */
-  const fetchAndCompute = useCallback(
-    async (coords: number[][], dateStr: string, timeStr: string, speed: number, vessel: VesselType) => {
-      if (coords.length < 2) return;
-      setTidalLoading(true);
-      try {
-        const departure = parseDeparture(timeStr, dateStr);
-        const cache = await fetchTidalData(coords, departure);
-        tidalCacheRef.current = cache;
-        const result = recomputeTidalRoute(cache, departure, speed, vessel);
-        setTidalResult(result);
-      } catch (e) {
-        console.error("Tidal calculation failed:", e);
-        setTidalResult(null);
-      } finally {
-        setTidalLoading(false);
-      }
-    },
-    [],
+  /** Fetch tidal/wind data from APIs — only needed when the route or date changes. */
+  const fetchTides = useCallback(async (coords: number[][], waypointIndices: number[], dateStr: string) => {
+    if (coords.length < 2) return;
+    // Ignore responses from fetches that a newer one has superseded.
+    const fetchId = ++fetchIdRef.current;
+    setTidalLoading(true);
+    try {
+      const cache = await fetchTidalData(coords, parseDeparture("00:00", dateStr), waypointIndices);
+      if (fetchId === fetchIdRef.current) setTidalCache(cache);
+    } catch (e) {
+      console.error("Tidal calculation failed:", e);
+      if (fetchId === fetchIdRef.current) setTidalCache(null);
+    } finally {
+      if (fetchId === fetchIdRef.current) setTidalLoading(false);
+    }
+  }, []);
+
+  const trip = useMemo<TripOptions>(
+    () => ({
+      roundTrip,
+      stopMinutes: waypoints.map((w) => w.stopMinutes),
+      returnStopMinutes: waypoints.map((w) => w.returnStopMinutes),
+    }),
+    [roundTrip, waypoints],
   );
 
-  /**
-   * Recompute from cached data — no API calls.
-   * Used when time, speed, or vessel type changes.
-   */
-  const recompute = useCallback(
-    (timeStr: string, dateStr: string, speed: number, vessel: VesselType) => {
-      const cache = tidalCacheRef.current;
-      if (!cache) return;
-      const departure = parseDeparture(timeStr, dateStr);
-      const result = recomputeTidalRoute(cache, departure, speed, vessel);
-      setTidalResult(result);
-    },
-    [],
+  // Pure math over the cached data, so it's cheap to redo on every input change.
+  const tidalResult = useMemo<TidalRouteResult | null>(
+    () =>
+      tidalCache
+        ? recomputeTidalRoute(tidalCache, parseDeparture(departureTime, departureDate), speedKnots, vesselType, trip)
+        : null,
+    [tidalCache, departureTime, departureDate, speedKnots, vesselType, trip],
   );
 
-  /** Debounced recompute — for slider and input changes */
-  const debouncedRecompute = useCallback(
-    (timeStr: string, dateStr: string, speed: number, vessel: VesselType) => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        recompute(timeStr, dateStr, speed, vessel);
-      }, 300);
+  /** Runs the best-departure sweep over a window on the selected date. */
+  const sweepDepartureWindow = useCallback(
+    (windowStart: string, windowEnd: string) => {
+      if (!tidalCache) return null;
+      return sweepDepartures(
+        tidalCache,
+        parseDeparture(windowStart, departureDate),
+        parseDeparture(windowEnd, departureDate),
+        speedKnots,
+        vesselType,
+        trip,
+      );
     },
-    [recompute],
+    [tidalCache, departureDate, speedKnots, vesselType, trip],
   );
 
   useEffect(() => {
@@ -276,7 +286,13 @@ export default function MapView() {
         for (let i = 0; i < rawCoords.length; i += 2) {
           coords.push([rawCoords[i + 1], rawCoords[i]]);
         }
+        // The first leg places waypoint 0 too; every leg ends at the next waypoint.
+        if (routeCoordsRef.current.length === 0) waypointCoordIndicesRef.current = [0];
         routeCoordsRef.current = [...routeCoordsRef.current, ...coords];
+        waypointCoordIndicesRef.current = [
+          ...waypointCoordIndicesRef.current,
+          routeCoordsRef.current.length - 1,
+        ];
         setTotalDistance((prev) => prev + distance);
 
         (routeMap?.getSource("route") as GeoJSONSource).setData({
@@ -294,15 +310,23 @@ export default function MapView() {
         });
 
         // Route changed — need fresh API data
-        fetchAndCompute(routeCoordsRef.current, departureDate, departureTime, speedKnots, vesselType);
+        fetchTides(routeCoordsRef.current, waypointCoordIndicesRef.current, departureDateRef.current);
       };
     }
-  }, [routeMap]);
+  }, [routeMap, fetchTides]);
 
+  // Route each new leg once. waypoints also changes when a stop time is edited,
+  // which must not re-route anything.
+  const routedWaypointCountRef = useRef(0);
   useEffect(() => {
-    if (waypoints.length < 2) return;
+    if (waypoints.length < routedWaypointCountRef.current) {
+      routedWaypointCountRef.current = waypoints.length; // route was cleared
+    }
+    if (waypoints.length < 2 || waypoints.length === routedWaypointCountRef.current) return;
+    if (!workerRef.current) return;
 
-    workerRef.current?.postMessage([
+    routedWaypointCountRef.current = waypoints.length;
+    workerRef.current.postMessage([
       waypoints[waypoints.length - 2],
       waypoints[waypoints.length - 1],
     ]);
@@ -620,16 +644,48 @@ export default function MapView() {
   function addWaypoint({ lat, lng }: { lat: number; lng: number }) {
     setWaypoints((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), lat, lng, label: `${prev.length + 1}` },
+      {
+        id: crypto.randomUUID(),
+        lat,
+        lng,
+        label: `${prev.length + 1}`,
+        stopMinutes: 0,
+        returnStopMinutes: 0,
+      },
     ]);
+  }
+
+  /** "15m", "15m / 10m back", or null, for the waypoint's marker. */
+  function stopBadge(waypoint: Waypoint, index: number) {
+    const last = waypoints.length - 1;
+    const out = index > 0 && (index < last || roundTrip) ? waypoint.stopMinutes : 0;
+    const back = roundTrip && index > 0 && index < last ? waypoint.returnStopMinutes : 0;
+    if (!out && !back) return null;
+    if (!back) return `${out}m`;
+    if (!out) return `${back}m back`;
+    return `${out}m / ${back}m back`;
+  }
+
+  function updateStop(waypointId: string, direction: "out" | "back", minutes: number) {
+    setWaypoints((prev) =>
+      prev.map((w) =>
+        w.id !== waypointId
+          ? w
+          : direction === "out"
+            ? { ...w, stopMinutes: minutes }
+            : { ...w, returnStopMinutes: minutes },
+      ),
+    );
   }
 
   function clearRoute() {
     setWaypoints([]);
     setTotalDistance(0);
-    setTidalResult(null);
-    tidalCacheRef.current = null;
+    fetchIdRef.current++; // drop any in-flight tide fetch
+    setTidalCache(null);
+    setTidalLoading(false);
     routeCoordsRef.current = [];
+    waypointCoordIndicesRef.current = [];
     (routeMap?.getSource("route") as GeoJSONSource)?.setData({
       type: "FeatureCollection",
       features: [],
@@ -684,25 +740,27 @@ export default function MapView() {
         speedKnots={speedKnots}
         onSpeedChange={(speed) => {
           setSpeedKnots(speed);
-          debouncedRecompute(departureTime, departureDate, speed, vesselType);
         }}
         departureTime={departureTime}
         onDepartureTimeChange={(time) => {
           setDepartureTime(time);
-          debouncedRecompute(time, departureDate, speedKnots, vesselType);
         }}
         departureDate={departureDate}
         onDepartureDateChange={(date) => {
           setDepartureDate(date);
           // Date change needs fresh API data
-          fetchAndCompute(routeCoordsRef.current, date, departureTime, speedKnots, vesselType);
+          fetchTides(routeCoordsRef.current, waypointCoordIndicesRef.current, date);
         }}
         vesselType={vesselType}
         onVesselTypeChange={(vessel) => {
           setVesselType(vessel);
-          recompute(departureTime, departureDate, speedKnots, vessel);
         }}
+        roundTrip={roundTrip}
+        onRoundTripChange={setRoundTrip}
+        waypoints={waypoints}
+        onStopChange={updateStop}
         weather={weather}
+        onSweepDepartures={sweepDepartureWindow}
       />
       <MapGL
         id="routeMap"
@@ -722,8 +780,13 @@ export default function MapView() {
             longitude={waypoint.lng}
             latitude={waypoint.lat}
           >
-            <div className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold shadow">
+            <div className="relative flex items-center justify-center w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold shadow">
               {i + 1}
+              {stopBadge(waypoint, i) && (
+                <span className="absolute left-full ml-1 whitespace-nowrap rounded bg-background text-foreground border border-border px-1 text-[10px] font-medium shadow-sm">
+                  {stopBadge(waypoint, i)}
+                </span>
+              )}
             </div>
           </Marker>
         ))}
