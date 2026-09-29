@@ -31,9 +31,18 @@ export interface TidalSegment {
   currentSpeed: number;
   windEffect: number;
   effectiveSpeed: number;
+  /** Boat speed + current + wind, before clamping. Negative means pushed backwards. */
+  netSpeed: number;
+  /** True when netSpeed is below STALL_THRESHOLD_KNOTS, so durationHours is not realistic. */
+  stalled: boolean;
   durationHours: number;
   stationName: string;
+  /** Estimated time the crew starts this segment. */
+  startTime: Date;
 }
+
+/** Net speeds below this are clamped, so the segment's timing can't be trusted. */
+export const STALL_THRESHOLD_KNOTS = 0.5;
 
 export interface TidalRouteResult {
   segments: TidalSegment[];
@@ -41,6 +50,8 @@ export interface TidalRouteResult {
   totalDurationWithoutEffects: number;
   tideDeltaMinutes: number;
   windDeltaMinutes: number;
+  /** Segments where current (and wind) outrun the boat, in route order. */
+  stalls: TidalSegment[];
 }
 
 /** Cached data from API fetches — can be reused for recomputes */
@@ -133,8 +144,9 @@ export function recomputeTidalRoute(
       windEffect = wind.speedKnots * WIND_DRAG[vesselType] * Math.cos(windAngleDiff);
     }
 
-    const effectiveSpeed = Math.max(0.5, vesselSpeedKnots + currentComponent + windEffect);
-    const tideOnlySpeed = Math.max(0.5, vesselSpeedKnots + currentComponent);
+    const netSpeed = vesselSpeedKnots + currentComponent + windEffect;
+    const effectiveSpeed = Math.max(STALL_THRESHOLD_KNOTS, netSpeed);
+    const tideOnlySpeed = Math.max(STALL_THRESHOLD_KNOTS, vesselSpeedKnots + currentComponent);
     const durationHours = distanceNm / effectiveSpeed;
     const baseDuration = distanceNm / vesselSpeedKnots;
     const tideOnlyDuration = distanceNm / tideOnlySpeed;
@@ -149,8 +161,11 @@ export function recomputeTidalRoute(
       currentSpeed: currentComponent,
       windEffect,
       effectiveSpeed,
+      netSpeed,
+      stalled: netSpeed < STALL_THRESHOLD_KNOTS,
       durationHours,
       stationName: station.name,
+      startTime: new Date(currentTime),
     });
 
     currentTime += durationHours * 3600 * 1000;
@@ -170,6 +185,7 @@ export function recomputeTidalRoute(
     totalDurationWithoutEffects: totalWithoutEffects,
     tideDeltaMinutes,
     windDeltaMinutes,
+    stalls: segments.filter((s) => s.stalled),
   };
 }
 

@@ -65,6 +65,18 @@ function onLoad(e: MapLibreEvent) {
     paint: { "line-color": "#2563eb", "line-width": 2 },
   });
 
+  // Stretches where current/wind outrun the boat, drawn over the route.
+  map.addSource("route-stalls", {
+    type: "geojson",
+    data: { type: "FeatureCollection", features: [] },
+  });
+  map.addLayer({
+    id: "route-stalls-line",
+    type: "line",
+    source: "route-stalls",
+    paint: { "line-color": "#dc2626", "line-width": 4 },
+  });
+
   map.addSource("graph-edges", {
     type: "geojson",
     data: { type: "FeatureCollection", features: [] },
@@ -139,7 +151,7 @@ export default function MapView() {
   const [totalDistance, setTotalDistance] = useState(0);
   const [tidalResult, setTidalResult] = useState<TidalRouteResult | null>(null);
   const [tidalLoading, setTidalLoading] = useState(false);
-  const [speedKnots, setSpeedKnots] = useState(4);
+  const [speedKnots, setSpeedKnots] = useState(3);
   const [departureTime, setDepartureTime] = useState(() =>
     new Date().toLocaleTimeString("en-US", {
       hour: "2-digit",
@@ -341,6 +353,18 @@ export default function MapView() {
 
     edgesSource.setData({ type: "FeatureCollection", features: edgeFeatures });
   }, [routeMap, graphVersion, graphSelection]);
+
+  useEffect(() => {
+    const source = routeMap?.getSource("route-stalls") as GeoJSONSource | undefined;
+    source?.setData({
+      type: "FeatureCollection",
+      features: (tidalResult?.stalls ?? []).map((segment) => ({
+        type: "Feature",
+        properties: { netSpeed: segment.netSpeed },
+        geometry: { type: "LineString", coordinates: [segment.from, segment.to] },
+      })),
+    });
+  }, [routeMap, tidalResult]);
 
   function handleClick(e: MapLayerMouseEvent) {
     if (!routeMap) return;

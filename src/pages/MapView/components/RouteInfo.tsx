@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   TidalRouteResult,
+  TidalSegment,
   VesselType,
   VESSEL_LABELS,
 } from "../../../services/tidalRoute";
@@ -35,6 +36,22 @@ function getEndTime(startTime: string, travelHours: number) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+/** Groups consecutive stalled segments into stretches of the route. */
+function getStallStretches(segments: TidalSegment[]): TidalSegment[][] {
+  const stretches: TidalSegment[][] = [];
+  let current: TidalSegment[] = [];
+  for (const segment of segments) {
+    if (segment.stalled) {
+      current.push(segment);
+    } else if (current.length > 0) {
+      stretches.push(current);
+      current = [];
+    }
+  }
+  if (current.length > 0) stretches.push(current);
+  return stretches;
 }
 
 function degreesToCompass(deg: number): string {
@@ -95,6 +112,12 @@ export default function RouteInfo({
   const tideDelta = tidalResult?.tideDeltaMinutes ?? 0;
   const windDelta = tidalResult?.windDeltaMinutes ?? 0;
   const hasRoute = totalDistance > 0;
+  const stallStretches =
+    tidalResult && !tidalLoading ? getStallStretches(tidalResult.segments) : [];
+  const firstStall = stallStretches[0];
+  const worstFirstStall = firstStall?.reduce((a, b) => (b.netSpeed < a.netSpeed ? b : a));
+  // When the boat can't make headway, durations are a lower bound, not an estimate.
+  const durationPrefix = stallStretches.length > 0 ? "≥ " : "";
 
   return (
     <Card className="absolute top-4 left-4 z-10 w-84" style={{ padding: 10 }}>
@@ -151,7 +174,7 @@ export default function RouteInfo({
                 <span className="font-medium">{speedKnots} knots</span>
               </div>
               <Slider
-                min={2}
+                min={1}
                 max={6}
                 step={0.5}
                 value={[speedKnots]}
@@ -213,12 +236,14 @@ export default function RouteInfo({
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Duration</span>
                 <span className="font-medium">
+                  {durationPrefix}
                   {formatDuration(adjustedHours)}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Est. Arrival</span>
                 <span className="font-medium">
+                  {durationPrefix}
                   {getEndTime(departureTime, adjustedHours)}
                 </span>
               </div>
@@ -250,6 +275,30 @@ export default function RouteInfo({
                     </span>
                   </div>
                 </>
+              )}
+
+              {firstStall && worstFirstStall && (
+                <div
+                  className="rounded-md border border-red-300 bg-red-50 text-red-800 text-xs space-y-1"
+                  style={{ padding: 6 }}
+                >
+                  <div className="font-bold">⚠ Current stronger than your speed</div>
+                  <div>
+                    Near {firstStall[0].stationName}, around{" "}
+                    {firstStall[0].startTime.toLocaleTimeString([], {
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                    ,{" "}
+                    {worstFirstStall.netSpeed < 0
+                      ? `you'd be pushed back at ${Math.abs(worstFirstStall.netSpeed).toFixed(1)} kts`
+                      : `you'd make only ${worstFirstStall.netSpeed.toFixed(1)} kts`}
+                    .
+                    {stallStretches.length > 1 &&
+                      ` +${stallStretches.length - 1} more stretch${stallStretches.length > 2 ? "es" : ""}.`}
+                  </div>
+                  <div>Try another departure time or a faster speed.</div>
+                </div>
               )}
 
               <Button
