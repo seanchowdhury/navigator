@@ -5,6 +5,7 @@ use ordered_float::OrderedFloat;
 use wasm_bindgen::prelude::*;
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
+use std::sync::OnceLock;
 
 #[wasm_bindgen]
 extern "C" {
@@ -16,27 +17,83 @@ fn load_graph() -> Graph {
     bincode::deserialize(data).expect("Failed to deserialize graph")
 }
 
+/// The graph plus everything derived from it, built once and reused across calls.
+struct Router {
+    graph: Graph,
+    adj: Vec<Vec<(u32, f32)>>,
+    /// Nodes in the largest connected component. Only these are snapped to, so
+    /// a click near an isolated patch of water still gets a route.
+    snappable: Vec<usize>,
+}
+
+impl Router {
+    fn new(graph: Graph) -> Self {
+        let mut adj: Vec<Vec<(u32, f32)>> = vec![vec![]; graph.nodes.len()];
+        for edge in &graph.edges {
+            adj[edge.from as usize].push((edge.to, edge.distance));
+            adj[edge.to as usize].push((edge.from, edge.distance));
+        }
+        let snappable = largest_component(&adj);
+        Router { graph, adj, snappable }
+    }
+
+    fn closest_node(&self, lat: f64, lng: f64) -> usize {
+        let nodes = &self.graph.nodes;
+        *self.snappable.iter()
+            .min_by(|&&a, &&b| {
+                let da = (nodes[a].lat - lat).powi(2) + (nodes[a].lng - lng).powi(2);
+                let db = (nodes[b].lat - lat).powi(2) + (nodes[b].lng - lng).powi(2);
+                da.partial_cmp(&db).unwrap()
+            })
+            .expect("graph has no nodes")
+    }
+}
+
+fn router() -> &'static Router {
+    static ROUTER: OnceLock<Router> = OnceLock::new();
+    ROUTER.get_or_init(|| Router::new(load_graph()))
+}
+
+/// Returns the node indices of the largest connected component.
+fn largest_component(adj: &[Vec<(u32, f32)>]) -> Vec<usize> {
+    let mut visited = vec![false; adj.len()];
+    let mut largest: Vec<usize> = vec![];
+    for start in 0..adj.len() {
+        if visited[start] { continue; }
+        visited[start] = true;
+        let mut component = vec![];
+        let mut stack = vec![start];
+        while let Some(u) = stack.pop() {
+            component.push(u);
+            for &(v, _) in &adj[u] {
+                if !visited[v as usize] {
+                    visited[v as usize] = true;
+                    stack.push(v as usize);
+                }
+            }
+        }
+        if component.len() > largest.len() {
+            largest = component;
+        }
+    }
+    largest
+}
+
 /// Returns the embedded waterway graph as JSON, for viewing/editing on the map.
 #[wasm_bindgen]
 pub fn get_graph() -> String {
-    let graph = load_graph();
-    serde_json::to_string(&graph).expect("Failed to serialize graph")
+    serde_json::to_string(&router().graph).expect("Failed to serialize graph")
 }
 
 #[wasm_bindgen]
 pub fn find_route(start_lat: f64, start_lng: f64, end_lat: f64, end_lng: f64) -> Vec<f64> {
-    let graph = load_graph();
+    let router = router();
+    let graph = &router.graph;
 
-    let mut adj: Vec<Vec<(u32, f32)>> = vec![vec![]; graph.nodes.len()];
-    for edge in &graph.edges {
-        adj[edge.from as usize].push((edge.to, edge.distance));
-        adj[edge.to as usize].push((edge.from, edge.distance));
-    }
+    let closest_start = router.closest_node(start_lat, start_lng);
+    let closest_end = router.closest_node(end_lat, end_lng);
 
-    let closest_start = closest_node(&graph, start_lat, start_lng);
-    let closest_end = closest_node(&graph, end_lat, end_lng);
-
-    match astar(&graph, &adj, closest_start, closest_end) {
+    match astar(graph, &router.adj, closest_start, closest_end) {
         Some((path, total_distance)) => {
             let mut result: Vec<f64> = path.iter()
                 .flat_map(|&i| vec![graph.nodes[i].lat, graph.nodes[i].lng])
@@ -46,18 +103,6 @@ pub fn find_route(start_lat: f64, start_lng: f64, end_lat: f64, end_lng: f64) ->
         }
         None => vec![],
     }
-}
-
-fn closest_node(graph: &Graph, lat: f64, lng: f64) -> usize {
-    graph.nodes.iter()
-        .enumerate()
-        .min_by(|(_, a), (_, b)| {
-            let da = (a.lat - lat).powi(2) + (a.lng - lng).powi(2);
-            let db = (b.lat - lat).powi(2) + (b.lng - lng).powi(2);
-            da.partial_cmp(&db).unwrap()
-        })
-        .unwrap()
-        .0
 }
 
 /// Shore penalty weight: higher values push routes further from shore.
@@ -154,5 +199,21 @@ mod tests {
             "reported {} m, path is {} m",
             reported, path_length
         );
+    }
+
+    /// Clicking right on an isolated patch of water must still snap onto the
+    /// main network and return a route.
+    #[test]
+    fn isolated_click_still_routes() {
+        let router = router();
+        let mut in_main = vec![false; router.graph.nodes.len()];
+        router.snappable.iter().for_each(|&i| in_main[i] = true);
+        let isolated = (0..in_main.len())
+            .find(|&i| !in_main[i])
+            .expect("test assumes the graph has isolated nodes");
+        let node = &router.graph.nodes[isolated];
+
+        let result = find_route(node.lat, node.lng, 40.7440, -73.9680);
+        assert!(result.len() > 4, "expected a route from an isolated click");
     }
 }
