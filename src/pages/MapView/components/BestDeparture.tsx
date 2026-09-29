@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DepartureOption, DepartureSweep } from "../../../services/tidalRoute";
+import { formatClock, formatHourTick, toTimeInputValue, zonedHour } from "../../../lib/time";
 
 // Chart geometry (SVG user units; the SVG scales to the panel width).
 const WIDTH = 300;
@@ -14,14 +15,6 @@ const LINE_COLOR = "#2563eb"; // matches the route line on the map
 const STALL_COLOR = "#dc2626"; // matches stalled legs on the map
 const BEST_COLOR = "#16a34a";
 
-function formatClock(date: Date) {
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-function formatHourTick(date: Date) {
-  return date.toLocaleTimeString([], { hour: "numeric" }).replace(":00", "").replace(" ", "").toLowerCase();
-}
-
 function formatDuration(hours: number) {
   const h = Math.floor(hours);
   const m = Math.round((hours - h) * 60);
@@ -29,19 +22,17 @@ function formatDuration(hours: number) {
   return `${h}h ${m}m`;
 }
 
-/** "HH:MM" (24h), the format the departure time input uses. */
-function toTimeInput(date: Date) {
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
-
 interface BestDepartureProps {
   /** Runs the sweep for a window given as "HH:MM" strings on the selected date. */
   onSweep: (windowStart: string, windowEnd: string) => DepartureSweep | null;
   onUseTime: (time: string) => void;
-  departureTime: string;
+  /** The currently selected departure, marked on the chart. */
+  departure: Date;
+  /** Region's IANA zone; times are shown and returned in it. */
+  timezone: string;
 }
 
-export default function BestDeparture({ onSweep, onUseTime, departureTime }: BestDepartureProps) {
+export default function BestDeparture({ onSweep, onUseTime, departure, timezone }: BestDepartureProps) {
   const [windowStart, setWindowStart] = useState("06:00");
   const [windowEnd, setWindowEnd] = useState("20:00");
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -85,8 +76,9 @@ export default function BestDeparture({ onSweep, onUseTime, departureTime }: Bes
             sweep={sweep}
             hoverIndex={hoverIndex}
             onHover={setHoverIndex}
-            onPick={(option) => onUseTime(toTimeInput(option.departure))}
-            departureTime={departureTime}
+            onPick={(option) => onUseTime(toTimeInputValue(option.departure, timezone))}
+            departure={departure}
+            timezone={timezone}
           />
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <LegendSwatch color={BEST_COLOR} label="Best window" />
@@ -96,17 +88,15 @@ export default function BestDeparture({ onSweep, onUseTime, departureTime }: Bes
           {sweep.best && sweep.bestWindow ? (
             <div className="space-y-2 text-xs">
               <p>
-                Fastest: leave at <span className="font-medium">{formatClock(sweep.best.departure)}</span> for{" "}
-                <span className="font-medium">{formatDuration(sweep.best.durationHours)}</span>
-                {sweep.bestWindow.start.getTime() !== sweep.bestWindow.end.getTime() && (
-                  <>
-                    . Anywhere from {formatClock(sweep.bestWindow.start)} to {formatClock(sweep.bestWindow.end)} is
-                    within 5 minutes of that.
-                  </>
-                )}
+                Fastest: leave at <span className="font-medium">{formatClock(sweep.best.departure, timezone)}</span>{" "}
+                for <span className="font-medium">{formatDuration(sweep.best.durationHours)}</span>.
               </p>
-              <Button size="sm" className="w-full" onClick={() => onUseTime(toTimeInput(sweep.best!.departure))}>
-                Use {formatClock(sweep.best.departure)}
+              <Button
+                size="sm"
+                className="w-full"
+                onClick={() => onUseTime(toTimeInputValue(sweep.best!.departure, timezone))}
+              >
+                Use {formatClock(sweep.best.departure, timezone)}
               </Button>
             </div>
           ) : (
@@ -135,10 +125,11 @@ interface SweepChartProps {
   hoverIndex: number | null;
   onHover: (index: number | null) => void;
   onPick: (option: DepartureOption) => void;
-  departureTime: string;
+  departure: Date;
+  timezone: string;
 }
 
-function SweepChart({ sweep, hoverIndex, onHover, onPick, departureTime }: SweepChartProps) {
+function SweepChart({ sweep, hoverIndex, onHover, onPick, departure, timezone }: SweepChartProps) {
   const { options, bestWindow } = sweep;
   const t0 = options[0].departure.getTime();
   const t1 = options[options.length - 1].departure.getTime();
@@ -155,24 +146,22 @@ function SweepChart({ sweep, hoverIndex, onHover, onPick, departureTime }: Sweep
   const y = (hours: number) => PAD.top + PLOT_H - (hours / yMax) * PLOT_H;
   const stepPx = options.length > 1 ? PLOT_W / (options.length - 1) : PLOT_W;
 
-  // X ticks on whole hours, every 2-4h depending on the window length.
+  // X ticks on whole hours of the region's clock, every 1-4h depending on the
+  // window length. (US zones are whole-hour offsets, so UTC hour boundaries are
+  // local hour boundaries too.)
   const hourMs = 3600 * 1000;
   const tickEvery = span > 10 * hourMs ? 4 : span > 4 * hourMs ? 2 : 1;
   const xTicks: Date[] = [];
-  const firstHour = new Date(t0);
-  firstHour.setMinutes(0, 0, 0);
-  if (firstHour.getTime() < t0) firstHour.setHours(firstHour.getHours() + 1);
-  for (let d = firstHour; d.getTime() <= t1; d = new Date(d.getTime() + hourMs)) {
-    if (d.getHours() % tickEvery === 0) xTicks.push(d);
+  for (let t = Math.ceil(t0 / hourMs) * hourMs; t <= t1; t += hourMs) {
+    const d = new Date(t);
+    if (zonedHour(d, timezone) % tickEvery === 0) xTicks.push(d);
   }
 
   const linePoints = options.map((o) => `${x(o.departure.getTime())},${y(o.durationHours)}`).join(" ");
   const areaPoints = `${x(t0)},${y(0)} ${linePoints} ${x(t1)},${y(0)}`;
 
   // Current departure time, if it falls inside the window.
-  const [curH, curM] = departureTime.split(":").map(Number);
-  const current = new Date(options[0].departure);
-  current.setHours(curH, curM, 0, 0);
+  const current = departure;
   const showCurrent = current.getTime() >= t0 && current.getTime() <= t1;
 
   const hovered = hoverIndex !== null ? options[hoverIndex] : null;
@@ -186,7 +175,7 @@ function SweepChart({ sweep, hoverIndex, onHover, onPick, departureTime }: Sweep
 
   const best = sweep.best;
   const summary = best
-    ? `Trip duration by departure time. Fastest is ${formatClock(best.departure)} at ${formatDuration(best.durationHours)}.`
+    ? `Trip duration by departure time. Fastest is ${formatClock(best.departure, timezone)} at ${formatDuration(best.durationHours)}.`
     : "Trip duration by departure time. Every departure in this window stalls.";
 
   return (
@@ -249,7 +238,7 @@ function SweepChart({ sweep, hoverIndex, onHover, onPick, departureTime }: Sweep
             fontSize={9}
             className="fill-muted-foreground"
           >
-            {formatHourTick(d)}
+            {formatHourTick(d, timezone)}
           </text>
         ))}
 
@@ -321,7 +310,7 @@ function SweepChart({ sweep, hoverIndex, onHover, onPick, departureTime }: Sweep
             transform: `translateX(${x(hovered.departure.getTime()) > WIDTH / 2 ? "-105%" : "5%"})`,
           }}
         >
-          <div className="font-medium">Leave {formatClock(hovered.departure)}</div>
+          <div className="font-medium">Leave {formatClock(hovered.departure, timezone)}</div>
           <div>
             {hovered.stalled ? "≥ " : ""}
             {formatDuration(hovered.durationHours)}

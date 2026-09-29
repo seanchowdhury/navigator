@@ -603,6 +603,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "console_error_panic_hook",
+ "flate2",
  "navigator_common",
  "ordered-float",
  "serde_json",
@@ -615,6 +616,7 @@ name = "navigator_offline"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "flate2",
  "geo",
  "geojson",
  "navigator_common",

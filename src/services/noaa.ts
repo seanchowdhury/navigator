@@ -53,39 +53,46 @@ export async function fetchCurrentStations(): Promise<CurrentStation[]> {
   return stationCache;
 }
 
+/**
+ * Predictions for 48h from `start` (an exact instant, e.g. local midnight in the
+ * region's time zone). Requested and parsed in GMT so times are correct whatever
+ * zone the station or the viewer is in.
+ */
 export async function fetchCurrentPredictions(
   stationId: string,
-  date: Date,
+  start: Date,
 ): Promise<CurrentPrediction[]> {
-  const dateStr = formatDate(date);
   const url =
     `${BASE_URL}/api/prod/datagetter` +
     `?station=${stationId}` +
     `&product=currents_predictions` +
-    `&begin_date=${dateStr}` +
+    `&begin_date=${encodeURIComponent(formatUtc(start))}` +
     // 48h so late departures (and the best-time sweep) still have data past midnight.
     `&range=48` +
     `&interval=6` +
     `&units=english` +
-    `&time_zone=lst_ldt` +
+    `&time_zone=gmt` +
     `&format=json`;
 
   const res = await fetch(url);
   const data: PredictionResponse = await res.json();
 
   return data.current_predictions.cp.map((p) => ({
-    time: new Date(p.Time),
+    // "2026-09-30 04:06" in GMT
+    time: new Date(`${p.Time.replace(" ", "T")}Z`),
     velocity: p.Velocity_Major,
     meanFloodDir: p.meanFloodDir,
     meanEbbDir: p.meanEbbDir,
   }));
 }
 
-function formatDate(d: Date): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}${mm}${dd}`;
+/** "yyyyMMdd HH:mm" in UTC, NOAA's begin_date format. */
+function formatUtc(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())} ` +
+    `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
+  );
 }
 
 /** Find the nearest current station to a given lat/lng */

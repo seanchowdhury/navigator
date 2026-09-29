@@ -4,9 +4,9 @@ import {
   fetchCurrentPredictions,
   fetchCurrentStations,
   findNearestStation,
-  findStationsForRoute,
 } from "./noaa";
 import { fetchWindForecast, interpolateWind, WindForecast } from "./nws";
+import { NonTidalArea, nonTidalAreaAt } from "../regions";
 
 export type VesselType = "kayak" | "scull" | "whitehall_gig";
 
@@ -100,6 +100,11 @@ export interface TidalRouteCache {
   stations: CurrentStation[];
   predictions: Map<string, CurrentPrediction[]>;
   windForecasts: WindForecast[];
+  /**
+   * Per segment (outbound order): the name of the non-tidal area its midpoint is
+   * in (a lake: no current), or null for tidal water.
+   */
+  segmentNonTidalAreas: (string | null)[];
 }
 
 /**
@@ -108,9 +113,12 @@ export interface TidalRouteCache {
  */
 export async function fetchTidalData(
   routeCoords: number[][],
+  /** Start of the 48h prediction window (local midnight of the departure date). */
   date: Date,
   /** Index into routeCoords of each waypoint. Defaults to just the two ends. */
   waypointCoordIndices: number[] = [0, routeCoords.length - 1],
+  /** Lakes etc. in the region; segments in them get no current. */
+  nonTidalAreas: NonTidalArea[] = [],
 ): Promise<TidalRouteCache> {
   const stations = await fetchCurrentStations();
   const { keptIndices, waypointVertices } = simplifyByStretch(routeCoords, waypointCoordIndices, 20);
@@ -118,7 +126,18 @@ export async function fetchTidalData(
   const segmentDistancesNm = keptIndices
     .slice(1)
     .map((end, k) => pathLengthNm(routeCoords, keptIndices[k], end));
-  const neededStations = findStationsForRoute(simplified, stations);
+  const segmentNonTidalAreas = simplified.slice(1).map((to, i) => {
+    const [fromLng, fromLat] = simplified[i];
+    return nonTidalAreaAt(nonTidalAreas, (fromLat + to[1]) / 2, (fromLng + to[0]) / 2)?.name ?? null;
+  });
+  // Only tidal segments need current predictions.
+  const neededStations = new Map<string, CurrentStation>();
+  simplified.slice(1).forEach((to, i) => {
+    if (segmentNonTidalAreas[i]) return;
+    const [fromLng, fromLat] = simplified[i];
+    const station = findNearestStation((fromLat + to[1]) / 2, (fromLng + to[0]) / 2, stations);
+    neededStations.set(station.id, station);
+  });
   const predictions = new Map<string, CurrentPrediction[]>();
 
   const midIdx = Math.floor(simplified.length / 2);
@@ -135,7 +154,15 @@ export async function fetchTidalData(
     fetchWindForecast(windLat, windLng).catch((): WindForecast[] => []),
   ]);
 
-  return { simplified, waypointVertices, segmentDistancesNm, stations, predictions, windForecasts };
+  return {
+    simplified,
+    waypointVertices,
+    segmentDistancesNm,
+    stations,
+    predictions,
+    windForecasts,
+    segmentNonTidalAreas,
+  };
 }
 
 /**
@@ -149,7 +176,15 @@ export function recomputeTidalRoute(
   vesselType: VesselType = "whitehall_gig",
   trip: TripOptions = ONE_WAY_NO_STOPS,
 ): TidalRouteResult {
-  const { simplified, waypointVertices, segmentDistancesNm, stations, predictions, windForecasts } = cache;
+  const {
+    simplified,
+    waypointVertices,
+    segmentDistancesNm,
+    stations,
+    predictions,
+    windForecasts,
+    segmentNonTidalAreas,
+  } = cache;
   const lastWaypoint = waypointVertices.length - 1;
   // Usually one waypoint per vertex, but two waypoints can snap to the same node.
   const waypointsAtVertex = new Map<number, number[]>();
@@ -158,12 +193,21 @@ export function recomputeTidalRoute(
   });
 
   // Outbound legs, then (for a round trip) the same legs back in reverse.
-  type Leg = { from: number[]; to: number[]; distanceNm: number; direction: "out" | "back"; endWaypoints: number[] };
+  type Leg = {
+    from: number[];
+    to: number[];
+    distanceNm: number;
+    direction: "out" | "back";
+    endWaypoints: number[];
+    /** Set for legs in a lake etc.: no current. */
+    nonTidalArea: string | null;
+  };
   const legs: Leg[] = simplified.slice(1).map((to, i) => ({
     from: simplified[i],
     to,
     distanceNm: segmentDistancesNm[i],
     direction: "out",
+    nonTidalArea: segmentNonTidalAreas[i],
     // Skip waypoint 0 when it shares the first vertex; it's the start, not an arrival.
     endWaypoints: (waypointsAtVertex.get(i + 1) ?? []).filter((w) => w > 0),
   }));
@@ -174,6 +218,7 @@ export function recomputeTidalRoute(
         to: simplified[i],
         distanceNm: segmentDistancesNm[i],
         direction: "back",
+        nonTidalArea: segmentNonTidalAreas[i],
         endWaypoints: [...(waypointsAtVertex.get(i) ?? [])].reverse(),
       });
     }
@@ -198,15 +243,16 @@ export function recomputeTidalRoute(
   let stopHours = 0;
   let stalledSoFar = false;
 
-  for (const { from, to, distanceNm, direction, endWaypoints } of legs) {
+  for (const { from, to, distanceNm, direction, endWaypoints, nonTidalArea } of legs) {
     // Bearing uses the straight chord; distance follows the actual route.
     const segmentBearing = bearing(from[1], from[0], to[1], to[0]);
 
     const midLat = (from[1] + to[1]) / 2;
     const midLng = (from[0] + to[0]) / 2;
-    const station = findNearestStation(midLat, midLng, stations);
+    // Lakes have no tidal current, so they don't use a station at all.
+    const station = nonTidalArea ? null : findNearestStation(midLat, midLng, stations);
 
-    const stationPreds = predictions.get(station.id);
+    const stationPreds = station ? predictions.get(station.id) : undefined;
     const currentAtTime = stationPreds
       ? interpolatePrediction(stationPreds, new Date(currentTime))
       : null;
@@ -252,7 +298,8 @@ export function recomputeTidalRoute(
       netSpeed,
       stalled,
       durationHours,
-      stationName: station.name,
+      // On a lake there's no station; name the lake instead (a stall there is wind).
+      stationName: station?.name ?? nonTidalArea ?? "",
       startTime: new Date(currentTime),
     });
 

@@ -2,10 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { ItineraryStop } from "../../../services/tidalRoute";
 import { Waypoint } from "../MapView.types";
-
-function formatClock(date: Date) {
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
+import { formatClock } from "../../../lib/time";
 
 interface Row {
   key: string;
@@ -51,12 +48,21 @@ interface ItineraryProps {
   waypoints: Waypoint[];
   roundTrip: boolean;
   departureTime: Date;
+  /** Region's IANA zone; times are shown in it. */
+  timezone: string;
   /** Null while tides are loading or unavailable; stops stay editable. */
   stops: ItineraryStop[] | null;
   onStopChange: (waypointId: string, direction: "out" | "back", minutes: number) => void;
 }
 
-export default function Itinerary({ waypoints, roundTrip, departureTime, stops, onStopChange }: ItineraryProps) {
+export default function Itinerary({
+  waypoints,
+  roundTrip,
+  departureTime,
+  timezone,
+  stops,
+  onStopChange,
+}: ItineraryProps) {
   if (waypoints.length < 2) return null;
   const rows = buildRows(waypoints, roundTrip);
   const find = (row: Row) =>
@@ -70,7 +76,7 @@ export default function Itinerary({ waypoints, roundTrip, departureTime, stops, 
           <span>
             <Badge label={waypoints[0].label} /> Start
           </span>
-          <span className="font-medium">Leave {formatClock(departureTime)}</span>
+          <span className="font-medium">Leave {formatClock(departureTime, timezone)}</span>
         </li>
         {rows.map((row) => {
           const stop = find(row);
@@ -82,7 +88,7 @@ export default function Itinerary({ waypoints, roundTrip, departureTime, stops, 
                 <Badge label={row.waypoint.label} /> {row.label}
               </span>
               <span className="flex items-center gap-1 shrink-0">
-                <span className="font-medium">{stop ? `${prefix}${formatClock(stop.arrival)}` : "—"}</span>
+                <span className="font-medium">{stop ? `${prefix}${formatClock(stop.arrival, timezone)}` : "—"}</span>
                 {row.canStop && (
                   <>
                     <span className="text-muted-foreground">· stop</span>

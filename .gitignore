@@ -26,3 +26,7 @@ dist-ssr
 # Build artifacts
 target/
 *.tsbuildinfo
+
+# OSM extracts used to build region graphs
+data/
+*.osm.pbf

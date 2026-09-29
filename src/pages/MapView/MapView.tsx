@@ -7,7 +7,7 @@ import {
   MapLibreEvent,
   Point as PointLike,
 } from "maplibre-gl";
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Waypoint, GraphNode, GraphEdge } from "./MapView.types";
 import RouteInfo from "./components/RouteInfo";
 import GraphEditor, { GraphMode, GraphSelection } from "./components/GraphEditor";
@@ -25,6 +25,17 @@ import {
   interpolateWind,
   WindForecast,
 } from "../../services/nws";
+import {
+  DEFAULT_REGION,
+  Region,
+  REGIONS,
+  RouteNote,
+  regionAt,
+  regionById,
+  regionsInBounds,
+} from "../../regions";
+import { toDateInputValue, toTimeInputValue, zonedDateTime } from "../../lib/time";
+import { WorkerRequest, WorkerResponse } from "../../workers/navigator.messages";
 
 function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const r = 6_371_000;
@@ -37,9 +48,15 @@ function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number)
   return r * 2 * Math.asin(Math.sqrt(a));
 }
 
-const longitude = -74.0117;
-const latitude = 40.7292;
-const zoom = 15;
+/** Below this zoom, panning doesn't download region graphs. */
+const REGION_LOAD_MIN_ZOOM = 9;
+/** Load regions this fraction of a screen outside the view, so they're ready on arrival. */
+const REGION_PREFETCH_MARGIN = 0.5;
+
+type RegionStatus =
+  | { state: "loading"; loaded: number; total: number | null }
+  | { state: "ready" }
+  | { state: "error"; message: string };
 
 function onLoad(e: MapLibreEvent) {
   const map = e.target;
@@ -111,6 +128,56 @@ function onLoad(e: MapLibreEvent) {
   });
 }
 
+/** The region's notes whose point is within its radius of any route coordinate ([lng, lat]). */
+function notesAlongRoute(region: Region, routeCoords: number[][]): RouteNote[] {
+  return (region.routeNotes ?? []).filter((note) =>
+    routeCoords.some(([lng, lat]) => haversineMeters(lat, lng, note.lat, note.lng) <= note.radiusM),
+  );
+}
+
+/**
+ * Bottom-center status: a notice if there is one, otherwise the active region's
+ * graph download progress or error. Hidden once the region is ready.
+ */
+function RegionStatusPill({
+  region,
+  status,
+  notice,
+  onRetry,
+}: {
+  region: Region | null;
+  status: RegionStatus | undefined;
+  notice: string | null;
+  onRetry: () => void;
+}) {
+  let content: React.ReactNode = null;
+  if (notice) {
+    content = notice;
+  } else if (region && status?.state === "loading") {
+    const pct = status.total ? Math.round((status.loaded / status.total) * 100) : null;
+    content = `Loading ${region.name} water map…${pct !== null ? ` ${pct}%` : ""}`;
+  } else if (region && status?.state === "error") {
+    content = (
+      <>
+        Couldn't load the {region.name} water map.{" "}
+        <button type="button" className="underline font-medium" onClick={onRetry}>
+          Retry
+        </button>
+      </>
+    );
+  }
+  if (!content) return null;
+  return (
+    <div
+      role="status"
+      className="absolute left-1/2 -translate-x-1/2 z-10 rounded-full border border-border bg-background/95 text-foreground shadow-md text-sm"
+      style={{ bottom: "calc(1.5rem + env(safe-area-inset-bottom, 0px))", padding: "6px 14px" }}
+    >
+      {content}
+    </div>
+  );
+}
+
 const NODE_HIT_RADIUS_PX = 8;
 
 /** Returns the id of the graph node closest to `point`, within NODE_HIT_RADIUS_PX. */
@@ -137,11 +204,6 @@ function graphNodeIdNear(map: MapLibreMap, point: PointLike): number | null {
   return bestId;
 }
 
-function parseDeparture(timeStr: string, dateStr: string): Date {
-  const [hours, minutes] = timeStr.split(":").map(Number);
-  const [year, month, day] = dateStr.split("-").map(Number);
-  return new Date(year, month - 1, day, hours, minutes, 0, 0);
-}
 
 export default function MapView() {
   const workerRef = useRef<Worker | null>(null);
@@ -154,27 +216,42 @@ export default function MapView() {
   // Waypoint positions within routeCoordsRef, so stops line up with the route.
   const waypointCoordIndicesRef = useRef<number[]>([]);
   const [tidalLoading, setTidalLoading] = useState(false);
+
+  // --- Regions ---
+  // A route belongs to the region its first waypoint is in; otherwise the region
+  // in view (or the default) sets the time zone and weather location.
+  const [routeRegionId, setRouteRegionId] = useState<string | null>(null);
+  const [viewRegionId, setViewRegionId] = useState<string | null>(null);
+  const [regionStatus, setRegionStatus] = useState<Record<string, RegionStatus>>({});
+  const activeRegion: Region =
+    regionById(routeRegionId ?? viewRegionId ?? "") ?? DEFAULT_REGION;
+  const timezone = activeRegion.timezone;
+  /** Region notes (e.g. locks) the current route passes near. */
+  const [routeNotes, setRouteNotes] = useState<RouteNote[]>([]);
+  /** Short-lived message, e.g. for a click outside every region. */
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [speedKnots, setSpeedKnots] = useState(3);
   const [departureTime, setDepartureTime] = useState(() =>
-    new Date().toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-      timeZone: "America/New_York",
-    }),
+    toTimeInputValue(new Date(), DEFAULT_REGION.timezone),
   );
-  const [departureDate, setDepartureDate] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  });
+  const [departureDate, setDepartureDate] = useState(() =>
+    toDateInputValue(new Date(), DEFAULT_REGION.timezone),
+  );
   const [vesselType, setVesselType] = useState<VesselType>("whitehall_gig");
   const [weather, setWeather] = useState<WindForecast | null>(null);
   const [roundTrip, setRoundTrip] = useState(false);
 
-  // Latest date, for the worker's onmessage (created once) which would otherwise
-  // capture the initial value.
+  /** The departure instant: the entered date and time on the region's wall clock. */
+  const departure = zonedDateTime(departureDate, departureTime, timezone);
+
+  // Latest values for the worker's onmessage (created once), which would otherwise
+  // capture the initial ones.
   const departureDateRef = useRef(departureDate);
   departureDateRef.current = departureDate;
+  const activeRegionRef = useRef(activeRegion);
+  activeRegionRef.current = activeRegion;
 
   // --- Water graph view/edit state ---
   const graphNodesRef = useRef<Map<number, GraphNode>>(new Map());
@@ -202,31 +279,39 @@ export default function MapView() {
   const [tidalCache, setTidalCache] = useState<TidalRouteCache | null>(null);
   const fetchIdRef = useRef(0);
 
-  const fetchWeather = useCallback(
-    async (timeStr: string, dateStr: string) => {
-      try {
-        const time = parseDeparture(timeStr, dateStr);
-        const forecasts = await fetchWindForecast(latitude, longitude);
-        setWeather(interpolateWind(forecasts, time));
-      } catch {
-        setWeather(null);
-      }
-    },
-    [],
-  );
-
+  // Weather at the route's start, or the region's center before there's a route.
+  const weatherLat = waypoints[0]?.lat ?? activeRegion.center.lat;
+  const weatherLng = waypoints[0]?.lng ?? activeRegion.center.lng;
+  const departureMs = departure.getTime();
   useEffect(() => {
-    fetchWeather(departureTime, departureDate);
-  }, [departureTime, departureDate, fetchWeather]);
+    let cancelled = false;
+    fetchWindForecast(weatherLat, weatherLng)
+      .then((forecasts) => {
+        if (!cancelled) setWeather(interpolateWind(forecasts, new Date(departureMs)));
+      })
+      .catch(() => {
+        if (!cancelled) setWeather(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [weatherLat, weatherLng, departureMs]);
 
   /** Fetch tidal/wind data from APIs — only needed when the route or date changes. */
-  const fetchTides = useCallback(async (coords: number[][], waypointIndices: number[], dateStr: string) => {
+  const fetchTides = useCallback(async (
+    coords: number[][],
+    waypointIndices: number[],
+    dateStr: string,
+    region: Region,
+  ) => {
     if (coords.length < 2) return;
     // Ignore responses from fetches that a newer one has superseded.
     const fetchId = ++fetchIdRef.current;
     setTidalLoading(true);
     try {
-      const cache = await fetchTidalData(coords, parseDeparture("00:00", dateStr), waypointIndices);
+      // Predictions start at local midnight of the departure date in the region.
+      const dayStart = zonedDateTime(dateStr, "00:00", region.timezone);
+      const cache = await fetchTidalData(coords, dayStart, waypointIndices, region.nonTidalAreas);
       if (fetchId === fetchIdRef.current) setTidalCache(cache);
     } catch (e) {
       console.error("Tidal calculation failed:", e);
@@ -249,9 +334,9 @@ export default function MapView() {
   const tidalResult = useMemo<TidalRouteResult | null>(
     () =>
       tidalCache
-        ? recomputeTidalRoute(tidalCache, parseDeparture(departureTime, departureDate), speedKnots, vesselType, trip)
+        ? recomputeTidalRoute(tidalCache, new Date(departureMs), speedKnots, vesselType, trip)
         : null,
-    [tidalCache, departureTime, departureDate, speedKnots, vesselType, trip],
+    [tidalCache, departureMs, speedKnots, vesselType, trip],
   );
 
   /** Runs the best-departure sweep over a window on the selected date. */
@@ -260,14 +345,72 @@ export default function MapView() {
       if (!tidalCache) return null;
       return sweepDepartures(
         tidalCache,
-        parseDeparture(windowStart, departureDate),
-        parseDeparture(windowEnd, departureDate),
+        zonedDateTime(departureDate, windowStart, timezone),
+        zonedDateTime(departureDate, windowEnd, timezone),
         speedKnots,
         vesselType,
         trip,
       );
     },
-    [tidalCache, departureDate, speedKnots, vesselType, trip],
+    [tidalCache, departureDate, timezone, speedKnots, vesselType, trip],
+  );
+
+  function showNotice(message: string) {
+    setNotice(message);
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = setTimeout(() => setNotice(null), 4000);
+  }
+
+  // Messages wait here until the worker reports it's ready (see "workerReady").
+  const workerReadyRef = useRef(false);
+  const workerQueueRef = useRef<WorkerRequest[]>([]);
+  function postToWorker(message: WorkerRequest) {
+    if (workerRef.current && workerReadyRef.current) workerRef.current.postMessage(message);
+    else workerQueueRef.current.push(message);
+  }
+
+  /** Starts downloading a region's graph unless it's loaded or loading. */
+  const regionStatusRef = useRef(regionStatus);
+  regionStatusRef.current = regionStatus;
+  function ensureRegionLoaded(region: Region) {
+    const status = regionStatusRef.current[region.id];
+    if (status && status.state !== "error") return;
+    const loading: RegionStatus = { state: "loading", loaded: 0, total: null };
+    regionStatusRef.current = { ...regionStatusRef.current, [region.id]: loading };
+    setRegionStatus((prev) => ({ ...prev, [region.id]: loading }));
+    postToWorker({
+      type: "loadRegion",
+      regionId: region.id,
+      url: region.graphUrl,
+      minComponentNodes: region.minComponentNodes ?? 0,
+    });
+  }
+
+  /** Called when the map settles: note the region in view and prefetch nearby graphs. */
+  function updateRegionsInView(map: MapLibreMap) {
+    const center = map.getCenter();
+    setViewRegionId(regionAt(center.lat, center.lng)?.id ?? null);
+    if (map.getZoom() < REGION_LOAD_MIN_ZOOM) return;
+
+    const bounds = map.getBounds();
+    const padLng = (bounds.getEast() - bounds.getWest()) * REGION_PREFETCH_MARGIN;
+    const padLat = (bounds.getNorth() - bounds.getSouth()) * REGION_PREFETCH_MARGIN;
+    regionsInBounds([
+      bounds.getWest() - padLng,
+      bounds.getSouth() - padLat,
+      bounds.getEast() + padLng,
+      bounds.getNorth() + padLat,
+    ]).forEach(ensureRegionLoaded);
+  }
+
+  // Route-leg requests in flight: requestId -> the waypoint the leg ends at.
+  const nextRequestIdRef = useRef(1);
+  const pendingLegsRef = useRef(new Map<number, string>());
+  /** Waypoints dropped after a failed leg; late results for them are ignored. */
+  const droppedWaypointIdsRef = useRef(new Set<string>());
+  // Dev graph editor requests: requestId -> resolver.
+  const pendingGraphsRef = useRef(
+    new Map<number, { resolve: (json: string) => void; reject: (e: Error) => void }>(),
   );
 
   useEffect(() => {
@@ -277,11 +420,61 @@ export default function MapView() {
         new URL("../../workers/navigator.worker.ts", import.meta.url),
         { type: "module" },
       );
-      workerRef.current.onmessage = (e) => {
-        const { coords: rawCoords, distance } = e.data as {
-          coords: number[];
-          distance: number;
-        };
+      workerRef.current.onmessage = (e: MessageEvent<WorkerResponse>) => {
+        const message = e.data;
+        switch (message.type) {
+          case "workerReady":
+            workerReadyRef.current = true;
+            workerQueueRef.current.forEach((queued) => workerRef.current?.postMessage(queued));
+            workerQueueRef.current = [];
+            return;
+          case "regionProgress":
+            setRegionStatus((prev) => ({
+              ...prev,
+              [message.regionId]: { state: "loading", loaded: message.loaded, total: message.total },
+            }));
+            return;
+          case "regionReady":
+            setRegionStatus((prev) => ({ ...prev, [message.regionId]: { state: "ready" } }));
+            return;
+          case "regionError":
+            setRegionStatus((prev) => ({
+              ...prev,
+              [message.regionId]: { state: "error", message: message.message },
+            }));
+            return;
+          case "graph":
+          case "graphError": {
+            const pending = pendingGraphsRef.current.get(message.requestId);
+            pendingGraphsRef.current.delete(message.requestId);
+            if (message.type === "graph") pending?.resolve(message.json);
+            else pending?.reject(new Error(message.message));
+            return;
+          }
+          case "routeError": {
+            const waypointId = pendingLegsRef.current.get(message.requestId);
+            pendingLegsRef.current.delete(message.requestId);
+            if (!waypointId || droppedWaypointIdsRef.current.has(waypointId)) return;
+            // Drop the waypoint this leg ends at (and any placed after it, whose legs
+            // started from it) so the route stays consistent.
+            setWaypoints((prev) => {
+              const index = prev.findIndex((w) => w.id === waypointId);
+              if (index === -1) return prev;
+              prev.slice(index).forEach((w) => droppedWaypointIdsRef.current.add(w.id));
+              return prev.slice(0, index);
+            });
+            showNotice(`Couldn't route there: ${message.message}`);
+            return;
+          }
+          case "route":
+            break;
+        }
+
+        const waypointId = pendingLegsRef.current.get(message.requestId);
+        pendingLegsRef.current.delete(message.requestId);
+        if (!waypointId || droppedWaypointIdsRef.current.has(waypointId)) return;
+
+        const { coords: rawCoords, distance } = message;
         const coords: number[][] = [];
         for (let i = 0; i < rawCoords.length; i += 2) {
           coords.push([rawCoords[i + 1], rawCoords[i]]);
@@ -309,10 +502,22 @@ export default function MapView() {
           ],
         });
 
+        setRouteNotes(notesAlongRoute(activeRegionRef.current, routeCoordsRef.current));
+
         // Route changed — need fresh API data
-        fetchTides(routeCoordsRef.current, waypointCoordIndicesRef.current, departureDateRef.current);
+        fetchTides(
+          routeCoordsRef.current,
+          waypointCoordIndicesRef.current,
+          departureDateRef.current,
+          activeRegionRef.current,
+        );
       };
+
+      // The map starts in the default region; load it and anything else in view.
+      updateRegionsInView(routeMap.getMap());
     }
+    // updateRegionsInView/showNotice only touch refs and state setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeMap, fetchTides]);
 
   // Route each new leg once. waypoints also changes when a stop time is edited,
@@ -323,14 +528,21 @@ export default function MapView() {
       routedWaypointCountRef.current = waypoints.length; // route was cleared
     }
     if (waypoints.length < 2 || waypoints.length === routedWaypointCountRef.current) return;
-    if (!workerRef.current) return;
+    if (!workerRef.current || !routeRegionId) return;
 
     routedWaypointCountRef.current = waypoints.length;
-    workerRef.current.postMessage([
-      waypoints[waypoints.length - 2],
-      waypoints[waypoints.length - 1],
-    ]);
-  }, [waypoints, routeMap]);
+    const from = waypoints[waypoints.length - 2];
+    const to = waypoints[waypoints.length - 1];
+    const requestId = nextRequestIdRef.current++;
+    pendingLegsRef.current.set(requestId, to.id);
+    postToWorker({
+      type: "route",
+      requestId,
+      regionId: routeRegionId,
+      from: { lat: from.lat, lng: from.lng },
+      to: { lat: to.lat, lng: to.lng },
+    });
+  }, [waypoints, routeMap, routeRegionId]);
 
   useEffect(() => {
     if (!routeMap) return;
@@ -400,11 +612,22 @@ export default function MapView() {
 
     if (!workerRef.current) return;
     const features = routeMap?.queryRenderedFeatures(e.point);
-    if (features?.some((feature) => feature.layer.id == "water")) {
-      addWaypoint({ lat: e.lngLat.lat, lng: e.lngLat.lng });
-    } else {
+    if (!features?.some((feature) => feature.layer.id == "water")) return;
+
+    const { lat, lng } = e.lngLat;
+    const region = regionAt(lat, lng);
+    if (!region) {
+      showNotice("Routing isn't available here yet.");
       return;
     }
+    if (routeRegionId && region.id !== routeRegionId) {
+      showNotice(`This route is in ${activeRegion.name}; clear it to plan in ${region.name}.`);
+      return;
+    }
+    // Usually already loaded from panning; legs placed while it loads wait in the worker.
+    ensureRegionLoaded(region);
+    if (!routeRegionId) setRouteRegionId(region.id);
+    addWaypoint({ lat, lng });
   }
 
   function handleGraphClick(e: MapLayerMouseEvent) {
@@ -509,10 +732,13 @@ export default function MapView() {
   async function loadGraph() {
     setGraphLoading(true);
     try {
-      // Imported lazily so production (where the editor is hidden) doesn't
-      // instantiate the WASM module on the main thread.
-      const { get_graph } = await import("navigator_core");
-      const json = get_graph();
+      // The worker already has the region's graph; ask it for a JSON copy.
+      ensureRegionLoaded(activeRegion);
+      const requestId = nextRequestIdRef.current++;
+      const json = await new Promise<string>((resolve, reject) => {
+        pendingGraphsRef.current.set(requestId, { resolve, reject });
+        postToWorker({ type: "getGraph", requestId, regionId: activeRegion.id });
+      });
       const parsed = JSON.parse(json) as {
         nodes: { lat: number; lng: number; shore_distance: number }[];
         edges: { from: number; to: number; distance: number }[];
@@ -680,6 +906,9 @@ export default function MapView() {
 
   function clearRoute() {
     setWaypoints([]);
+    setRouteRegionId(null);
+    setRouteNotes([]);
+    pendingLegsRef.current.clear();
     setTotalDistance(0);
     fetchIdRef.current++; // drop any in-flight tide fetch
     setTidalCache(null);
@@ -749,7 +978,7 @@ export default function MapView() {
         onDepartureDateChange={(date) => {
           setDepartureDate(date);
           // Date change needs fresh API data
-          fetchTides(routeCoordsRef.current, waypointCoordIndicesRef.current, date);
+          fetchTides(routeCoordsRef.current, waypointCoordIndicesRef.current, date, activeRegion);
         }}
         vesselType={vesselType}
         onVesselTypeChange={(vessel) => {
@@ -761,13 +990,36 @@ export default function MapView() {
         onStopChange={updateStop}
         weather={weather}
         onSweepDepartures={sweepDepartureWindow}
+        departure={departure}
+        timezone={timezone}
+        regions={REGIONS}
+        selectedRegionId={viewRegionId ?? activeRegion.id}
+        onRegionSelect={(id) => {
+          const region = regionById(id);
+          if (!region) return;
+          ensureRegionLoaded(region);
+          setViewRegionId(region.id);
+          routeMap?.flyTo({ center: [region.center.lng, region.center.lat], zoom: region.zoom });
+        }}
+        routeNotes={routeNotes}
+      />
+      <RegionStatusPill
+        region={regionStatus[activeRegion.id] ? activeRegion : null}
+        status={regionStatus[activeRegion.id]}
+        notice={notice}
+        onRetry={() => ensureRegionLoaded(activeRegion)}
       />
       <MapGL
         id="routeMap"
-        initialViewState={{ latitude, longitude, zoom }}
+        initialViewState={{
+          latitude: DEFAULT_REGION.center.lat,
+          longitude: DEFAULT_REGION.center.lng,
+          zoom: DEFAULT_REGION.zoom,
+        }}
         style={{ height: "100vh", width: "100%" }}
         mapStyle="https://tiles.openfreemap.org/styles/liberty"
         onLoad={(e) => onLoad(e)}
+        onMoveEnd={(e) => updateRegionsInView(e.target)}
         onClick={handleClick}
         onMouseDown={handleGraphMouseDown}
         onMouseMove={handleGraphMouseMove}

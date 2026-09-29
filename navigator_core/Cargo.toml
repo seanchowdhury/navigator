@@ -25,3 +25,5 @@ serde_json = "1"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.34"
+# Tests read the shipped (gzipped) graph files
+flate2 = "1"

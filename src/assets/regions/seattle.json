@@ -1,0 +1,56 @@
+{
+  "nonTidalAreas": [
+    {
+      "name": "Lake Union & Ship Canal",
+      "comment": "Fresh water east of the Ballard Locks: Salmon Bay, the Ship Canal, Lake Union, Portage Bay, Montlake Cut, Union Bay. West edge is the locks.",
+      "polygon": [
+        [-122.397, 47.670],
+        [-122.397, 47.662],
+        [-122.388, 47.652],
+        [-122.372, 47.651],
+        [-122.350, 47.645],
+        [-122.345, 47.623],
+        [-122.320, 47.623],
+        [-122.300, 47.635],
+        [-122.275, 47.638],
+        [-122.275, 47.665],
+        [-122.310, 47.660],
+        [-122.340, 47.660],
+        [-122.370, 47.672],
+        [-122.397, 47.670]
+      ]
+    },
+    {
+      "name": "Lake Washington",
+      "comment": "West edge stays east of the Duwamish (tidal) in the south and of Puget Sound in the north.",
+      "polygon": [
+        [-122.295, 47.780],
+        [-122.190, 47.780],
+        [-122.190, 47.490],
+        [-122.270, 47.490],
+        [-122.270, 47.540],
+        [-122.295, 47.590],
+        [-122.295, 47.780]
+      ]
+    },
+    {
+      "name": "Green Lake",
+      "polygon": [
+        [-122.350, 47.672],
+        [-122.320, 47.672],
+        [-122.320, 47.690],
+        [-122.350, 47.690],
+        [-122.350, 47.672]
+      ]
+    }
+  ],
+  "routeNotes": [
+    {
+      "name": "Ballard Locks",
+      "lat": 47.6655,
+      "lng": -122.3972,
+      "radiusM": 250,
+      "message": "This route goes through the Ballard Locks (Hiram M. Chittenden Locks). The wait to lock through often runs 30–60 minutes and isn't included in the estimate — add it as a stop at the nearest waypoint if you want it counted."
+    }
+  ]
+}

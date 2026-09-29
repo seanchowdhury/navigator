@@ -5,6 +5,26 @@ export interface WindForecast {
   windDirectionLabel: string; // e.g. "NNE"
   temperatureF: number;
   shortForecast: string; // e.g. "Partly Cloudy"
+  isDaytime: boolean;
+}
+
+/**
+ * An emoji for an NWS shortForecast ("Mostly Sunny", "Chance Rain Showers",
+ * "Patchy Fog", ...), or "" if nothing matches. Checks the most significant
+ * weather first, so "Showers And Thunderstorms" is a storm, not rain.
+ */
+export function weatherEmoji(shortForecast: string, isDaytime = true): string {
+  const f = shortForecast.toLowerCase();
+  if (f.includes("thunder")) return "⛈️";
+  if (/snow|flurr|blizzard|sleet|freezing|ice/.test(f)) return "🌨️";
+  if (/rain|shower|drizzle/.test(f)) return /chance/.test(f) && isDaytime ? "🌦️" : "🌧️";
+  if (/fog|haze|smoke|mist/.test(f)) return "🌫️";
+  if (f.includes("partly")) return isDaytime ? "⛅" : "☁️";
+  if (/mostly sunny|mostly clear/.test(f)) return isDaytime ? "🌤️" : "🌙";
+  if (/cloudy|overcast/.test(f)) return "☁️";
+  if (/sunny|clear|fair/.test(f)) return isDaytime ? "☀️" : "🌙";
+  if (/wind|breez|blustery/.test(f)) return "💨";
+  return "";
 }
 
 interface GridPointCache {
@@ -13,7 +33,7 @@ interface GridPointCache {
   gridY: number;
 }
 
-let gridCache: Map<string, GridPointCache> = new Map();
+const gridCache: Map<string, GridPointCache> = new Map();
 
 function gridKey(lat: number, lng: number): string {
   // Round to ~10km grid to reuse lookups along a route
@@ -38,7 +58,7 @@ async function getGridPoint(lat: number, lng: number): Promise<GridPointCache> {
   return grid;
 }
 
-let forecastCache: Map<string, WindForecast[]> = new Map();
+const forecastCache: Map<string, WindForecast[]> = new Map();
 
 export async function fetchWindForecast(
   lat: number,
@@ -61,6 +81,7 @@ export async function fetchWindForecast(
       windDirection: string;
       temperature: number;
       shortForecast: string;
+      isDaytime: boolean;
     }) => ({
       time: new Date(p.startTime),
       speedKnots: parseWindSpeed(p.windSpeed),
@@ -68,6 +89,7 @@ export async function fetchWindForecast(
       windDirectionLabel: p.windDirection,
       temperatureF: p.temperature,
       shortForecast: p.shortForecast,
+      isDaytime: p.isDaytime ?? true,
     }),
   );
 

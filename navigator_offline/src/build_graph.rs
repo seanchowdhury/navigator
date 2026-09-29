@@ -1,8 +1,11 @@
 use navigator_common::Graph;
 
-/// Rebuilds graph.bin from a JSON graph (as exported by the in-browser graph editor).
+mod graph_io;
+
+/// Rebuilds a region's graph file from a JSON graph (as exported by the in-browser
+/// graph editor). An output path ending in .gz is written gzipped, as the app ships.
 ///
-/// Usage: build_graph <input.json> [output.bin]
+/// Usage: build_graph <input.json> [output.bin[.gz]]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = std::env::args()
         .nth(1)
@@ -28,12 +31,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let encoded = bincode::serialize(&graph)?;
-    std::fs::write(&output, &encoded)?;
+    let written = graph_io::write_graph(&graph, &output)?;
     println!(
         "Wrote graph to {} ({:.1} MB)",
         output,
-        encoded.len() as f64 / 1_048_576.0
+        written as f64 / 1_048_576.0
     );
 
     Ok(())

@@ -10,11 +10,13 @@ import {
   VesselType,
   VESSEL_LABELS,
 } from "../../../services/tidalRoute";
-import { WindForecast } from "../../../services/nws";
+import { WindForecast, weatherEmoji } from "../../../services/nws";
 import { ArrowUp, Clock } from "lucide-react";
 import BestDeparture from "./BestDeparture";
 import Itinerary from "./Itinerary";
 import { Waypoint } from "../MapView.types";
+import { formatClock } from "../../../lib/time";
+import { Region, RouteNote } from "../../../regions";
 
 function formatDistance(meters: number) {
   const miles = meters / 1609.344;
@@ -32,15 +34,8 @@ function formatDuration(hours: number) {
   return `${h}h ${m}m`;
 }
 
-function getEndTime(startTime: string, travelHours: number) {
-  const [hours, minutes] = startTime.split(":").map(Number);
-  const startDate = new Date();
-  startDate.setHours(hours, minutes, 0, 0);
-  const endDate = new Date(startDate.getTime() + travelHours * 60 * 60 * 1000);
-  return endDate.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+function getEndTime(departure: Date, travelHours: number, timeZone: string) {
+  return formatClock(new Date(departure.getTime() + travelHours * 60 * 60 * 1000), timeZone);
 }
 
 /** Groups consecutive stalled segments into stretches of the route. */
@@ -111,6 +106,15 @@ interface RouteInfoProps {
   onRoundTripChange: (roundTrip: boolean) => void;
   waypoints: Waypoint[];
   onStopChange: (waypointId: string, direction: "out" | "back", minutes: number) => void;
+  /** departureDate + departureTime as an instant in the region's time zone. */
+  departure: Date;
+  /** Region's IANA zone; all times are shown in it. */
+  timezone: string;
+  regions: Region[];
+  selectedRegionId: string;
+  onRegionSelect: (regionId: string) => void;
+  /** Region notes the route passes near (e.g. locks). */
+  routeNotes: RouteNote[];
 }
 
 export default function RouteInfo({
@@ -132,6 +136,12 @@ export default function RouteInfo({
   onRoundTripChange,
   waypoints,
   onStopChange,
+  departure,
+  timezone,
+  regions,
+  selectedRegionId,
+  onRegionSelect,
+  routeNotes,
 }: RouteInfoProps) {
   const [showBestDeparture, setShowBestDeparture] = useState(false);
   // Once tides are computed, show the same route length the timings are based on.
@@ -157,8 +167,20 @@ export default function RouteInfo({
       className="absolute top-4 left-4 z-10 w-84 max-h-[calc(100dvh-2rem)] overflow-auto overscroll-contain"
       style={{ padding: 10 }}
     >
-      <CardHeader className="pb-2">
+      <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
         <CardTitle>Float Plan</CardTitle>
+        <select
+          value={selectedRegionId}
+          onChange={(e) => onRegionSelect(e.target.value)}
+          className="border rounded px-2 py-1 text-sm bg-background"
+          aria-label="Region"
+        >
+          {regions.map((region) => (
+            <option key={region.id} value={region.id}>
+              {region.name}
+            </option>
+          ))}
+        </select>
       </CardHeader>
       <CardContent>
         <div className="text-sm">
@@ -203,7 +225,8 @@ export default function RouteInfo({
               <BestDeparture
                 onSweep={onSweepDepartures}
                 onUseTime={onDepartureTimeChange}
-                departureTime={departureTime}
+                departure={departure}
+                timezone={timezone}
               />
             )}
             <div className="flex justify-between items-center">
@@ -246,7 +269,15 @@ export default function RouteInfo({
               <>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Forecast</span>
-                  <span className="font-medium">{weather.shortForecast}</span>
+                  <span className="font-medium">
+                    {weather.shortForecast}
+                    {weatherEmoji(weather.shortForecast, weather.isDaytime) && (
+                      // Decorative: the text beside it says the same thing.
+                      <span aria-hidden="true" className="ml-1.5">
+                        {weatherEmoji(weather.shortForecast, weather.isDaytime)}
+                      </span>
+                    )}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Temperature</span>
@@ -310,14 +341,15 @@ export default function RouteInfo({
                 <span className="text-muted-foreground">{roundTrip ? "Est. Return" : "Est. Arrival"}</span>
                 <span className="font-medium">
                   {durationPrefix}
-                  {getEndTime(departureTime, adjustedHours)}
+                  {getEndTime(departure, adjustedHours, timezone)}
                 </span>
               </div>
 
               <Itinerary
                 waypoints={waypoints}
                 roundTrip={roundTrip}
-                departureTime={new Date(`${departureDate}T${departureTime}`)}
+                departureTime={departure}
+                timezone={timezone}
                 stops={tidalResult && !tidalLoading ? tidalResult.itinerary : null}
                 onStopChange={onStopChange}
               />
@@ -359,10 +391,7 @@ export default function RouteInfo({
                   <div className="font-bold">⚠ Current stronger than your speed</div>
                   <div>
                     Near {firstStall[0].stationName}, around{" "}
-                    {firstStall[0].startTime.toLocaleTimeString([], {
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}
+                    {formatClock(firstStall[0].startTime, timezone)}
                     ,{" "}
                     {worstFirstStall.netSpeed < 0
                       ? `you'd be pushed back at ${Math.abs(worstFirstStall.netSpeed).toFixed(1)} kts`
@@ -374,6 +403,17 @@ export default function RouteInfo({
                   <div>Try another departure time or a faster speed.</div>
                 </div>
               )}
+
+              {routeNotes.map((note) => (
+                <div
+                  key={note.name}
+                  className="rounded-md border border-amber-300 bg-amber-50 text-amber-900 text-xs space-y-1"
+                  style={{ padding: 6 }}
+                >
+                  <div className="font-bold">ⓘ {note.name}</div>
+                  <div>{note.message}</div>
+                </div>
+              ))}
 
               <Button
                 variant="destructive"

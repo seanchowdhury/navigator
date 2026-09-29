@@ -230,10 +230,9 @@ export default function GraphEditor({
             <p className="text-xs text-muted-foreground">
               Export, then run{" "}
               <code className="bg-muted px-1 rounded">
-                cargo run -p navigator_offline --bin build_graph -- graph.edited.json navigator_core/graph.bin
+                cargo run -p navigator_offline --bin build_graph -- graph.edited.json src/assets/graphs/nyc.bin.gz
               </code>{" "}
-              and rebuild the WASM package (<code className="bg-muted px-1 rounded">wasm-pack build</code> in{" "}
-              <code className="bg-muted px-1 rounded">navigator_core/</code>) to apply.
+              (use the region's file) and reload the page to apply.
             </p>
           )}
         </div>

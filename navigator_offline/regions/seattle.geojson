@@ -1,0 +1,27 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Seattle",
+        "description": "Lake Washington, Lake Union and the Ship Canal, and central Puget Sound from Shilshole to Alki across to Bainbridge Island (Eagle Harbor, Rich Passage, Agate Passage, Blake Island).",
+        "source": "https://download.geofabrik.de/north-america/us/washington-latest.osm.pbf",
+        "build": "cargo run --release -p navigator_offline -- data/washington-latest.osm.pbf src/assets/graphs/seattle.bin.gz --bounds navigator_offline/regions/seattle.geojson --spacing 75 --sea-seed 47.63,-122.46 --waterway-types canal --waterway-buffer 40",
+        "notes": "75m spacing keeps the gzipped graph ~2.6 MB; canals are buffered to 40m so the Montlake and Fremont cuts stay connected. The sea seed is open water between West Point and Bainbridge."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-122.6, 47.49],
+            [-122.19, 47.49],
+            [-122.19, 47.78],
+            [-122.6, 47.78],
+            [-122.6, 47.49]
+          ]
+        ]
+      }
+    }
+  ]
+}

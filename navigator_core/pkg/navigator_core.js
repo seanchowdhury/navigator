@@ -5,5 +5,5 @@ import { __wbg_set_wasm } from "./navigator_core_bg.js";
 __wbg_set_wasm(wasm);
 wasm.__wbindgen_start();
 export {
-    find_route, get_graph
+    find_route, get_graph, load_region, unload_region
 } from "./navigator_core_bg.js";
