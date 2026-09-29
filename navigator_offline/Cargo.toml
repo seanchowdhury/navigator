@@ -13,6 +13,10 @@ path = "src/filter.rs"
 name = "dump_graph"
 path = "src/dump_graph.rs"
 
+[[bin]]
+name = "build_graph"
+path = "src/build_graph.rs"
+
 [dependencies]
 navigator_common = { path = "../navigator_common" }
 geojson = { version = "0.24", features = ["geo-types"] }

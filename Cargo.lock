@@ -605,6 +605,7 @@ dependencies = [
  "console_error_panic_hook",
  "navigator_common",
  "ordered-float",
+ "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-test",
 ]

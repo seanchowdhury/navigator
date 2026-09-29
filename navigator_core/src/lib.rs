@@ -11,10 +11,21 @@ extern "C" {
     fn alert(s: &str);
 }
 
+fn load_graph() -> Graph {
+    let data = include_bytes!("../graph.bin");
+    bincode::deserialize(data).expect("Failed to deserialize graph")
+}
+
+/// Returns the embedded waterway graph as JSON, for viewing/editing on the map.
+#[wasm_bindgen]
+pub fn get_graph() -> String {
+    let graph = load_graph();
+    serde_json::to_string(&graph).expect("Failed to serialize graph")
+}
+
 #[wasm_bindgen]
 pub fn find_route(start_lat: f64, start_lng: f64, end_lat: f64, end_lng: f64) -> Vec<f64> {
-    let data = include_bytes!("../graph.bin");
-    let graph: Graph = bincode::deserialize(data).expect("Failed to deserialize graph");
+    let graph = load_graph();
 
     let mut adj: Vec<Vec<(u32, f32)>> = vec![vec![]; graph.nodes.len()];
     for edge in &graph.edges {

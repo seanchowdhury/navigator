@@ -1,9 +1,16 @@
-import Map, { Marker, useMap } from "react-map-gl/maplibre";
+import MapGL, { Marker, useMap } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { GeoJSONSource, MapLayerMouseEvent, MapLibreEvent } from "maplibre-gl";
+import {
+  GeoJSONSource,
+  Map as MapLibreMap,
+  MapLayerMouseEvent,
+  MapLibreEvent,
+  Point as PointLike,
+} from "maplibre-gl";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Waypoint } from "./MapView.types";
+import { Waypoint, GraphNode, GraphEdge } from "./MapView.types";
 import RouteInfo from "./components/RouteInfo";
+import GraphEditor, { GraphMode, GraphSelection } from "./components/GraphEditor";
 import {
   fetchTidalData,
   recomputeTidalRoute,
@@ -16,6 +23,17 @@ import {
   interpolateWind,
   WindForecast,
 } from "../../services/nws";
+
+function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const r = 6_371_000;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return r * 2 * Math.asin(Math.sqrt(a));
+}
 
 const longitude = -74.0117;
 const latitude = 40.7292;
@@ -46,6 +64,63 @@ function onLoad(e: MapLibreEvent) {
     source: "route",
     paint: { "line-color": "#2563eb", "line-width": 2 },
   });
+
+  map.addSource("graph-edges", {
+    type: "geojson",
+    data: { type: "FeatureCollection", features: [] },
+  });
+  map.addLayer({
+    id: "graph-edges-layer",
+    type: "line",
+    source: "graph-edges",
+    paint: {
+      "line-color": ["case", ["get", "selected"], "#f59e0b", "#059669"],
+      "line-width": ["case", ["get", "selected"], 3, 1],
+      "line-opacity": 0.6,
+    },
+  });
+
+  map.addSource("graph-nodes", {
+    type: "geojson",
+    data: { type: "FeatureCollection", features: [] },
+  });
+  map.addLayer({
+    id: "graph-nodes-layer",
+    type: "circle",
+    source: "graph-nodes",
+    paint: {
+      "circle-radius": ["case", ["get", "selected"], 6, 3],
+      "circle-color": ["case", ["get", "selected"], "#f59e0b", "#059669"],
+      "circle-stroke-width": 1,
+      "circle-stroke-color": "#065f46",
+    },
+  });
+}
+
+const NODE_HIT_RADIUS_PX = 8;
+
+/** Returns the id of the graph node closest to `point`, within NODE_HIT_RADIUS_PX. */
+function graphNodeIdNear(map: MapLibreMap, point: PointLike): number | null {
+  const { x, y } = point;
+  const features = map.queryRenderedFeatures(
+    [
+      [x - NODE_HIT_RADIUS_PX, y - NODE_HIT_RADIUS_PX],
+      [x + NODE_HIT_RADIUS_PX, y + NODE_HIT_RADIUS_PX],
+    ],
+    { layers: ["graph-nodes-layer"] },
+  );
+  let bestId: number | null = null;
+  let bestDist = Infinity;
+  for (const f of features) {
+    if (f.geometry.type !== "Point") continue;
+    const p = map.project(f.geometry.coordinates as [number, number]);
+    const dist = Math.hypot(p.x - x, p.y - y);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestId = f.properties!.id as number;
+    }
+  }
+  return bestId;
 }
 
 function parseDeparture(timeStr: string, dateStr: string): Date {
@@ -79,6 +154,28 @@ export default function MapView() {
   });
   const [vesselType, setVesselType] = useState<VesselType>("whitehall_gig");
   const [weather, setWeather] = useState<WindForecast | null>(null);
+
+  // --- Water graph view/edit state ---
+  const graphNodesRef = useRef<Map<number, GraphNode>>(new Map());
+  const graphEdgesRef = useRef<GraphEdge[]>([]);
+  const nextGraphNodeIdRef = useRef(0);
+  const [graphLoaded, setGraphLoaded] = useState(false);
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [graphVersion, setGraphVersion] = useState(0);
+  const [graphDirty, setGraphDirty] = useState(false);
+  const [graphEditMode, setGraphEditMode] = useState(false);
+  const [graphMode, setGraphMode] = useState<GraphMode>("select");
+  const [linkFromId, setLinkFromId] = useState<number | null>(null);
+  const [graphSelection, setGraphSelection] = useState<GraphSelection>(null);
+  const boxStartRef = useRef<{ x: number; y: number } | null>(null);
+  const [selectionBox, setSelectionBox] = useState<
+    { x1: number; y1: number; x2: number; y2: number } | null
+  >(null);
+
+  const bumpGraph = useCallback((dirty = true) => {
+    setGraphVersion((v) => v + 1);
+    if (dirty) setGraphDirty(true);
+  }, []);
 
   // Cached API data — only re-fetched when route or date changes
   const tidalCacheRef = useRef<TidalRouteCache | null>(null);
@@ -199,15 +296,301 @@ export default function MapView() {
     ]);
   }, [waypoints, routeMap]);
 
-  function handleClick(e: MapLayerMouseEvent) {
-    if (!routeMap || !workerRef.current) return;
+  useEffect(() => {
+    if (!routeMap) return;
+    const nodesSource = routeMap.getSource("graph-nodes") as GeoJSONSource | undefined;
+    const edgesSource = routeMap.getSource("graph-edges") as GeoJSONSource | undefined;
+    if (!nodesSource || !edgesSource) return;
 
+    const selectedNodeIds = new Set(graphSelection?.type === "nodes" ? graphSelection.ids : []);
+    nodesSource.setData({
+      type: "FeatureCollection",
+      features: Array.from(graphNodesRef.current.values()).map((n) => ({
+        type: "Feature",
+        properties: {
+          id: n.id,
+          shore_distance: n.shore_distance,
+          selected: selectedNodeIds.has(n.id),
+        },
+        geometry: { type: "Point", coordinates: [n.lng, n.lat] },
+      })),
+    });
+
+    const edgeFeatures = graphEdgesRef.current
+      .map((edge, index) => {
+        const from = graphNodesRef.current.get(edge.from);
+        const to = graphNodesRef.current.get(edge.to);
+        if (!from || !to) return null;
+        return {
+          type: "Feature" as const,
+          properties: {
+            index,
+            distance: edge.distance,
+            selected: graphSelection?.type === "edge" && graphSelection.index === index,
+          },
+          geometry: {
+            type: "LineString" as const,
+            coordinates: [
+              [from.lng, from.lat],
+              [to.lng, to.lat],
+            ],
+          },
+        };
+      })
+      .filter((f): f is NonNullable<typeof f> => f !== null);
+
+    edgesSource.setData({ type: "FeatureCollection", features: edgeFeatures });
+  }, [routeMap, graphVersion, graphSelection]);
+
+  function handleClick(e: MapLayerMouseEvent) {
+    if (!routeMap) return;
+
+    if (graphEditMode) {
+      handleGraphClick(e);
+      return;
+    }
+
+    if (!workerRef.current) return;
     const features = routeMap?.queryRenderedFeatures(e.point);
     if (features?.some((feature) => feature.layer.id == "water")) {
       addWaypoint({ lat: e.lngLat.lat, lng: e.lngLat.lng });
     } else {
       return;
     }
+  }
+
+  function handleGraphClick(e: MapLayerMouseEvent) {
+    if (!routeMap) return;
+
+    if (graphMode === "add-node") {
+      addGraphNode(e.lngLat.lat, e.lngLat.lng);
+      return;
+    }
+
+    const nodeId = graphNodeIdNear(e.target, e.point);
+
+    if (graphMode === "link") {
+      if (nodeId === null) return;
+      linkGraphNode(nodeId);
+      return;
+    }
+
+    // select mode
+    // Shift+click is handled on mouseup by the box-select handlers.
+    if (e.originalEvent.shiftKey) return;
+    const additive = e.originalEvent.metaKey || e.originalEvent.ctrlKey;
+    const [edgeFeature] = e.target.queryRenderedFeatures(e.point, {
+      layers: ["graph-edges-layer"],
+    });
+    if (nodeId !== null) {
+      const id = nodeId;
+      if (additive) {
+        toggleSelectedGraphNodes([id]);
+      } else {
+        setGraphSelection({ type: "nodes", ids: [id] });
+      }
+    } else if (additive) {
+      // Modifier-click on empty space keeps the current selection.
+      return;
+    } else if (edgeFeature) {
+      setGraphSelection({ type: "edge", index: edgeFeature.properties!.index as number });
+    } else {
+      setGraphSelection(null);
+    }
+  }
+
+  /** Toggles each id in/out of the current node selection. */
+  function toggleSelectedGraphNodes(ids: number[]) {
+    setGraphSelection((prev) => {
+      const next = new Set(prev?.type === "nodes" ? prev.ids : []);
+      for (const id of ids) {
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+      }
+      return next.size > 0 ? { type: "nodes", ids: Array.from(next) } : null;
+    });
+  }
+
+  /** Adds each id to the current node selection. */
+  function addSelectedGraphNodes(ids: number[]) {
+    setGraphSelection((prev) => {
+      const next = new Set(prev?.type === "nodes" ? prev.ids : []);
+      ids.forEach((id) => next.add(id));
+      return next.size > 0 ? { type: "nodes", ids: Array.from(next) } : null;
+    });
+  }
+
+  // Shift+drag box selection (select mode only). Box-zoom is disabled while editing.
+  function handleGraphMouseDown(e: MapLayerMouseEvent) {
+    if (!graphEditMode || graphMode !== "select" || !e.originalEvent.shiftKey) return;
+    e.target.dragPan.disable();
+    boxStartRef.current = { x: e.point.x, y: e.point.y };
+    setSelectionBox({ x1: e.point.x, y1: e.point.y, x2: e.point.x, y2: e.point.y });
+  }
+
+  function handleGraphMouseMove(e: MapLayerMouseEvent) {
+    const start = boxStartRef.current;
+    if (!start) return;
+    setSelectionBox({ x1: start.x, y1: start.y, x2: e.point.x, y2: e.point.y });
+  }
+
+  function handleGraphMouseUp(e: MapLayerMouseEvent) {
+    const start = boxStartRef.current;
+    if (!start) return;
+    boxStartRef.current = null;
+    setSelectionBox(null);
+    e.target.dragPan.enable();
+
+    // A tiny box is really a shift+click: toggle the nearest node.
+    if (Math.abs(e.point.x - start.x) < 4 && Math.abs(e.point.y - start.y) < 4) {
+      const id = graphNodeIdNear(e.target, e.point);
+      if (id !== null) toggleSelectedGraphNodes([id]);
+      return;
+    }
+
+    const features = e.target.queryRenderedFeatures(
+      [
+        [Math.min(start.x, e.point.x), Math.min(start.y, e.point.y)],
+        [Math.max(start.x, e.point.x), Math.max(start.y, e.point.y)],
+      ],
+      { layers: ["graph-nodes-layer"] },
+    );
+    addSelectedGraphNodes(features.map((f) => f.properties!.id as number));
+  }
+
+  async function loadGraph() {
+    setGraphLoading(true);
+    try {
+      // Imported lazily so production (where the editor is hidden) doesn't
+      // instantiate the WASM module on the main thread.
+      const { get_graph } = await import("navigator_core");
+      const json = get_graph();
+      const parsed = JSON.parse(json) as {
+        nodes: { lat: number; lng: number; shore_distance: number }[];
+        edges: { from: number; to: number; distance: number }[];
+      };
+      const nodeMap = new Map<number, GraphNode>();
+      parsed.nodes.forEach((n, i) =>
+        nodeMap.set(i, { id: i, lat: n.lat, lng: n.lng, shore_distance: n.shore_distance }),
+      );
+      graphNodesRef.current = nodeMap;
+      graphEdgesRef.current = parsed.edges.map((e) => ({
+        from: e.from,
+        to: e.to,
+        distance: e.distance,
+      }));
+      nextGraphNodeIdRef.current = parsed.nodes.length;
+      setGraphLoaded(true);
+      setGraphDirty(false);
+      setGraphSelection(null);
+      bumpGraph(false);
+    } finally {
+      setGraphLoading(false);
+    }
+  }
+
+  function addGraphNode(lat: number, lng: number) {
+    const id = nextGraphNodeIdRef.current++;
+    graphNodesRef.current.set(id, { id, lat, lng, shore_distance: 0 });
+    setGraphSelection({ type: "nodes", ids: [id] });
+    setGraphMode("select");
+    bumpGraph();
+  }
+
+  function linkGraphNode(id: number) {
+    if (linkFromId === null) {
+      setLinkFromId(id);
+      return;
+    }
+    if (linkFromId === id) {
+      setLinkFromId(null);
+      return;
+    }
+    const from = graphNodesRef.current.get(linkFromId);
+    const to = graphNodesRef.current.get(id);
+    if (from && to) {
+      graphEdgesRef.current.push({
+        from: linkFromId,
+        to: id,
+        distance: haversineMeters(from.lat, from.lng, to.lat, to.lng),
+      });
+      bumpGraph();
+    }
+    setLinkFromId(null);
+  }
+
+  function updateSelectedGraphNode(
+    patch: Partial<Pick<GraphNode, "lat" | "lng" | "shore_distance">>,
+  ) {
+    if (graphSelection?.type !== "nodes" || graphSelection.ids.length !== 1) return;
+    const nodeId = graphSelection.ids[0];
+    const node = graphNodesRef.current.get(nodeId);
+    if (!node) return;
+    const updated = { ...node, ...patch };
+    graphNodesRef.current.set(nodeId, updated);
+
+    // Keep incident edge distances in sync when the node moves.
+    if (patch.lat !== undefined || patch.lng !== undefined) {
+      graphEdgesRef.current = graphEdgesRef.current.map((edge) => {
+        if (edge.from !== nodeId && edge.to !== nodeId) return edge;
+        const other = graphNodesRef.current.get(edge.from === nodeId ? edge.to : edge.from);
+        if (!other) return edge;
+        return {
+          ...edge,
+          distance: haversineMeters(updated.lat, updated.lng, other.lat, other.lng),
+        };
+      });
+    }
+    bumpGraph();
+  }
+
+  function deleteGraphSelection() {
+    if (!graphSelection) return;
+    if (graphSelection.type === "nodes") {
+      const ids = new Set(graphSelection.ids);
+      ids.forEach((id) => graphNodesRef.current.delete(id));
+      graphEdgesRef.current = graphEdgesRef.current.filter(
+        (edge) => !ids.has(edge.from) && !ids.has(edge.to),
+      );
+    } else {
+      graphEdgesRef.current = graphEdgesRef.current.filter(
+        (_, index) => index !== graphSelection.index,
+      );
+    }
+    setGraphSelection(null);
+    bumpGraph();
+  }
+
+  function resetGraph() {
+    setLinkFromId(null);
+    loadGraph();
+  }
+
+  function exportGraph() {
+    const entries = Array.from(graphNodesRef.current.entries()).sort((a, b) => a[0] - b[0]);
+    const idRemap = new Map<number, number>();
+    const nodes = entries.map(([oldId, n], newIndex) => {
+      idRemap.set(oldId, newIndex);
+      return { lat: n.lat, lng: n.lng, shore_distance: n.shore_distance };
+    });
+    const edges = graphEdgesRef.current
+      .filter((e) => idRemap.has(e.from) && idRemap.has(e.to))
+      .map((e) => ({
+        from: idRemap.get(e.from)!,
+        to: idRemap.get(e.to)!,
+        distance: e.distance,
+      }));
+
+    const blob = new Blob([JSON.stringify({ nodes, edges })], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "graph.edited.json";
+    a.click();
+    URL.revokeObjectURL(url);
+    setGraphDirty(false);
   }
 
   function addWaypoint({ lat, lng }: { lat: number; lng: number }) {
@@ -229,8 +612,46 @@ export default function MapView() {
     });
   }
 
+  const selectedGraphNode =
+    graphSelection?.type === "nodes" && graphSelection.ids.length === 1
+      ? graphNodesRef.current.get(graphSelection.ids[0]) ?? null
+      : null;
+  const selectedGraphEdge =
+    graphSelection?.type === "edge" ? graphEdgesRef.current[graphSelection.index] ?? null : null;
+
   return (
     <div className="relative">
+      {import.meta.env.DEV && (
+        <GraphEditor
+          loaded={graphLoaded}
+          loading={graphLoading}
+          editMode={graphEditMode}
+          onToggleEditMode={() => {
+            setGraphEditMode((prev) => !prev);
+            setGraphMode("select");
+            setLinkFromId(null);
+            setGraphSelection(null);
+          }}
+          onLoad={loadGraph}
+          onReset={resetGraph}
+          onExport={exportGraph}
+          dirty={graphDirty}
+          nodeCount={graphNodesRef.current.size}
+          edgeCount={graphEdgesRef.current.length}
+          mode={graphMode}
+          onModeChange={(mode) => {
+            setGraphMode(mode);
+            setLinkFromId(null);
+          }}
+          linkFromId={linkFromId}
+          selection={graphSelection}
+          selectedNode={selectedGraphNode}
+          selectedEdge={selectedGraphEdge}
+          onUpdateSelectedNode={updateSelectedGraphNode}
+          onDeleteSelection={deleteGraphSelection}
+          onClearSelection={() => setGraphSelection(null)}
+        />
+      )}
       <RouteInfo
         totalDistance={totalDistance}
         onClear={clearRoute}
@@ -259,13 +680,17 @@ export default function MapView() {
         }}
         weather={weather}
       />
-      <Map
+      <MapGL
         id="routeMap"
         initialViewState={{ latitude, longitude, zoom }}
         style={{ height: "100vh", width: "100%" }}
         mapStyle="https://tiles.openfreemap.org/styles/liberty"
         onLoad={(e) => onLoad(e)}
         onClick={handleClick}
+        onMouseDown={handleGraphMouseDown}
+        onMouseMove={handleGraphMouseMove}
+        onMouseUp={handleGraphMouseUp}
+        boxZoom={!graphEditMode}
       >
         {waypoints.map((waypoint, i) => (
           <Marker
@@ -278,7 +703,18 @@ export default function MapView() {
             </div>
           </Marker>
         ))}
-      </Map>
+      </MapGL>
+      {selectionBox && (
+        <div
+          className="absolute pointer-events-none border-2 border-amber-500 bg-amber-500/10"
+          style={{
+            left: Math.min(selectionBox.x1, selectionBox.x2),
+            top: Math.min(selectionBox.y1, selectionBox.y2),
+            width: Math.abs(selectionBox.x2 - selectionBox.x1),
+            height: Math.abs(selectionBox.y2 - selectionBox.y1),
+          }}
+        />
+      )}
     </div>
   );
 }

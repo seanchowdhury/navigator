@@ -20,11 +20,6 @@ This app allows the user to place markers on a map of NYC and it will do it's be
 
 To limit scope I've started this project to only work in the water around NYC. If you row somewhere else in the world and would like functionality there please contact me.
 
-### Known Issues
-
-The app treats Roosevelt Island as water.
-The app treats DeGraw Street in Brooklyn as water.
-
 ## How?
 
 Navigator allows a user to input their departure time and date, their vessel type and their estimated average speed. Once it collects that information it makes an API call to NOAA to retrieve tidal and weather information.
