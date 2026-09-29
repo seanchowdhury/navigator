@@ -1,2 +1,0 @@
-std::result::Result<(), std::boxed::Box<std::string::String, (dyn std::error::Error + 'static)>>
-std::result::Result<(), std::boxed::Box<std::string::String, (dyn std::error::Error + 'static)>>: wasm_bindgen::convert::ReturnWasmAbi
