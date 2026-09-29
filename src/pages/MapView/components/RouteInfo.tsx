@@ -107,6 +107,8 @@ export default function RouteInfo({
   onVesselTypeChange,
   weather,
 }: RouteInfoProps) {
+  // Once tides are computed, show the same route length the timings are based on.
+  const displayDistance = tidalResult ? tidalResult.totalDistanceNm * 1852 : totalDistance;
   const baseTravelHours = getTravelHours(totalDistance, speedKnots);
   const adjustedHours = tidalResult?.totalDurationHours ?? baseTravelHours;
   const tideDelta = tidalResult?.tideDeltaMinutes ?? 0;
@@ -230,7 +232,7 @@ export default function RouteInfo({
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Distance</span>
                 <span className="font-medium">
-                  {formatDistance(totalDistance)}
+                  {formatDistance(displayDistance)}
                 </span>
               </div>
               <div className="flex justify-between">

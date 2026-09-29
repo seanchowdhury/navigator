@@ -79,9 +79,13 @@ fn astar(graph: &Graph, adj: &[Vec<(u32, f32)>], start: usize, end: usize) -> Op
     let goal_lat = graph.nodes[end].lat;
     let goal_lng = graph.nodes[end].lng;
 
+    // g_score is the search cost (distance + shore penalty); dist is the plain
+    // geometric distance along the same path, which is what we report.
     let mut g_score = vec![f32::INFINITY; n];
+    let mut dist = vec![f32::INFINITY; n];
     let mut prev = vec![usize::MAX; n];
     g_score[start] = 0.0;
+    dist[start] = 0.0;
 
     let h_start = haversine(graph.nodes[start].lat, graph.nodes[start].lng, goal_lat, goal_lng);
     let mut heap = BinaryHeap::new();
@@ -103,6 +107,7 @@ fn astar(graph: &Graph, adj: &[Vec<(u32, f32)>], start: usize, end: usize) -> Op
             let tentative_g = g_u + w + penalty;
             if tentative_g < g_score[vi] {
                 g_score[vi] = tentative_g;
+                dist[vi] = dist[u] + w;
                 prev[vi] = u;
                 let h = haversine(graph.nodes[vi].lat, graph.nodes[vi].lng, goal_lat, goal_lng);
                 heap.push(Reverse((OrderedFloat(tentative_g + h), vi)));
@@ -111,7 +116,7 @@ fn astar(graph: &Graph, adj: &[Vec<(u32, f32)>], start: usize, end: usize) -> Op
     }
 
     if g_score[end] == f32::INFINITY { return None; }
-    let total_distance = g_score[end];
+    let total_distance = dist[end];
     let mut path = vec![end];
     let mut cur = end;
     while cur != start {
@@ -120,4 +125,34 @@ fn astar(graph: &Graph, adj: &[Vec<(u32, f32)>], start: usize, end: usize) -> Op
     }
     path.reverse();
     Some((path, total_distance))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The reported distance must be the path's geometric length, not the
+    /// A* cost (which includes the shore penalty).
+    #[test]
+    fn route_distance_excludes_shore_penalty() {
+        // East River, Brooklyn Bridge to around E 34th St: narrow enough that the
+        // shore penalty applies along most of the route.
+        let result = find_route(40.7040, -73.9950, 40.7440, -73.9680);
+        assert!(result.len() > 4, "expected a route");
+
+        let (coords, distance) = result.split_at(result.len() - 1);
+        let path_length: f32 = coords
+            .chunks(2)
+            .collect::<Vec<_>>()
+            .windows(2)
+            .map(|w| haversine(w[0][0], w[0][1], w[1][0], w[1][1]))
+            .sum();
+
+        let reported = distance[0] as f32;
+        assert!(
+            (reported - path_length).abs() / path_length < 0.01,
+            "reported {} m, path is {} m",
+            reported, path_length
+        );
+    }
 }

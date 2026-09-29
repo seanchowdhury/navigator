@@ -50,6 +50,8 @@ export interface TidalRouteResult {
   totalDurationWithoutEffects: number;
   tideDeltaMinutes: number;
   windDeltaMinutes: number;
+  /** Route length (nm) the timings are based on. */
+  totalDistanceNm: number;
   /** Segments where current (and wind) outrun the boat, in route order. */
   stalls: TidalSegment[];
 }
@@ -57,6 +59,8 @@ export interface TidalRouteResult {
 /** Cached data from API fetches — can be reused for recomputes */
 export interface TidalRouteCache {
   simplified: number[][];
+  /** Length (nm) of the full route between each pair of simplified points. */
+  segmentDistancesNm: number[];
   stations: CurrentStation[];
   predictions: Map<string, CurrentPrediction[]>;
   windForecasts: WindForecast[];
@@ -71,7 +75,11 @@ export async function fetchTidalData(
   date: Date,
 ): Promise<TidalRouteCache> {
   const stations = await fetchCurrentStations();
-  const simplified = simplifyRoute(routeCoords, 20);
+  const keptIndices = simplifyRoute(routeCoords, 20);
+  const simplified = keptIndices.map((i) => routeCoords[i]);
+  const segmentDistancesNm = keptIndices
+    .slice(1)
+    .map((end, k) => pathLengthNm(routeCoords, keptIndices[k], end));
   const neededStations = findStationsForRoute(simplified, stations);
   const predictions = new Map<string, CurrentPrediction[]>();
 
@@ -89,7 +97,7 @@ export async function fetchTidalData(
     fetchWindForecast(windLat, windLng).catch((): WindForecast[] => []),
   ]);
 
-  return { simplified, stations, predictions, windForecasts };
+  return { simplified, segmentDistancesNm, stations, predictions, windForecasts };
 }
 
 /**
@@ -102,7 +110,7 @@ export function recomputeTidalRoute(
   vesselSpeedKnots: number,
   vesselType: VesselType = "whitehall_gig",
 ): TidalRouteResult {
-  const { simplified, stations, predictions, windForecasts } = cache;
+  const { simplified, segmentDistancesNm, stations, predictions, windForecasts } = cache;
 
   const segments: TidalSegment[] = [];
   let currentTime = departureTime.getTime();
@@ -114,7 +122,8 @@ export function recomputeTidalRoute(
     const to = simplified[i + 1];
 
     const segmentBearing = bearing(from[1], from[0], to[1], to[0]);
-    const distanceNm = haversineNm(from[1], from[0], to[1], to[0]);
+    // Bearing uses the straight chord; distance follows the actual route.
+    const distanceNm = segmentDistancesNm[i];
 
     const midLat = (from[1] + to[1]) / 2;
     const midLng = (from[0] + to[0]) / 2;
@@ -185,20 +194,31 @@ export function recomputeTidalRoute(
     totalDurationWithoutEffects: totalWithoutEffects,
     tideDeltaMinutes,
     windDeltaMinutes,
+    totalDistanceNm: segments.reduce((sum, s) => sum + s.distanceNm, 0),
     stalls: segments.filter((s) => s.stalled),
   };
 }
 
-function simplifyRoute(coords: number[][], maxSegments: number): number[][] {
-  if (coords.length <= maxSegments + 1) return coords;
+/** Returns the indices of the route points kept as segment endpoints. */
+function simplifyRoute(coords: number[][], maxSegments: number): number[] {
+  if (coords.length <= maxSegments + 1) return coords.map((_, i) => i);
 
   const step = Math.floor(coords.length / maxSegments);
-  const result: number[][] = [];
+  const result: number[] = [];
   for (let i = 0; i < coords.length - 1; i += step) {
-    result.push(coords[i]);
+    result.push(i);
   }
-  result.push(coords[coords.length - 1]);
+  result.push(coords.length - 1);
   return result;
+}
+
+/** Length (nm) of the route polyline from coords[start] to coords[end]. */
+function pathLengthNm(coords: number[][], start: number, end: number): number {
+  let total = 0;
+  for (let i = start; i < end; i++) {
+    total += haversineNm(coords[i][1], coords[i][0], coords[i + 1][1], coords[i + 1][0]);
+  }
+  return total;
 }
 
 function interpolatePrediction(
