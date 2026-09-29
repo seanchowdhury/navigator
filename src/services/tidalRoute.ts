@@ -3,7 +3,7 @@ import {
   CurrentStation,
   fetchCurrentPredictions,
   fetchCurrentStations,
-  findNearestStation,
+  stationsNear,
 } from "./noaa";
 import { fetchWindForecast, interpolateWind, WindForecast } from "./nws";
 import { NonTidalArea, nonTidalAreaAt } from "../regions";
@@ -37,6 +37,8 @@ export interface TidalSegment {
   stalled: boolean;
   durationHours: number;
   stationName: string;
+  /** What this segment's current is based on. */
+  current: CurrentSource;
   /** Estimated time the crew starts this segment. */
   startTime: Date;
 }
@@ -59,6 +61,8 @@ export interface TidalRouteResult {
   itinerary: ItineraryStop[];
   /** Segments where current (and wind) outrun the boat, in route order. */
   stalls: TidalSegment[];
+  /** Some segments had no usable NOAA station nearby and assume no current. */
+  missingCurrentData: boolean;
 }
 
 export interface ItineraryStop {
@@ -97,15 +101,25 @@ export interface TidalRouteCache {
   waypointVertices: number[];
   /** Length (nm) of the full route between each pair of simplified points. */
   segmentDistancesNm: number[];
-  stations: CurrentStation[];
   predictions: Map<string, CurrentPrediction[]>;
   windForecasts: WindForecast[];
-  /**
-   * Per segment (outbound order): the name of the non-tidal area its midpoint is
-   * in (a lake: no current), or null for tidal water.
-   */
-  segmentNonTidalAreas: (string | null)[];
+  /** Where each segment's current comes from (outbound order; the return reuses it). */
+  segmentCurrents: CurrentSource[];
 }
+
+/** What a segment's current is based on. */
+export type CurrentSource =
+  /** Predictions from a NOAA station (harmonic, or subordinate events). */
+  | { kind: "station"; stationId: string; name: string }
+  /** No tidal current: a lake/locked water, or a NOAA "weak and variable" station. */
+  | { kind: "none"; reason: "nonTidal" | "weak"; name: string }
+  /** No usable station nearby (or all failed); treated as no current. */
+  | { kind: "unavailable" };
+
+/** Stations further than this from a segment aren't used for it. */
+const MAX_STATION_KM = 8;
+/** How many nearby stations to try if the nearest ones have no data. */
+const MAX_STATION_ATTEMPTS = 3;
 
 /**
  * Fetch and cache tidal/wind data for a route and date.
@@ -126,31 +140,54 @@ export async function fetchTidalData(
   const segmentDistancesNm = keptIndices
     .slice(1)
     .map((end, k) => pathLengthNm(routeCoords, keptIndices[k], end));
-  const segmentNonTidalAreas = simplified.slice(1).map((to, i) => {
-    const [fromLng, fromLat] = simplified[i];
-    return nonTidalAreaAt(nonTidalAreas, (fromLat + to[1]) / 2, (fromLng + to[0]) / 2)?.name ?? null;
-  });
-  // Only tidal segments need current predictions.
-  const neededStations = new Map<string, CurrentStation>();
-  simplified.slice(1).forEach((to, i) => {
-    if (segmentNonTidalAreas[i]) return;
-    const [fromLng, fromLat] = simplified[i];
-    const station = findNearestStation((fromLat + to[1]) / 2, (fromLng + to[0]) / 2, stations);
-    neededStations.set(station.id, station);
-  });
+
+  // Each station is fetched at most once; failures resolve to null so one bad
+  // station can't sink the whole route.
   const predictions = new Map<string, CurrentPrediction[]>();
+  const fetches = new Map<string, Promise<CurrentPrediction[] | null>>();
+  const fetchStation = (station: CurrentStation) => {
+    let pending = fetches.get(station.id);
+    if (!pending) {
+      pending = fetchCurrentPredictions(station.id, date)
+        .then((preds) => {
+          if (preds.length === 0) return null;
+          predictions.set(station.id, preds);
+          return preds;
+        })
+        .catch((e) => {
+          console.warn(`Current predictions unavailable for ${station.id} (${station.name}):`, e);
+          return null;
+        });
+      fetches.set(station.id, pending);
+    }
+    return pending;
+  };
+
+  const resolveSegmentCurrent = async (from: number[], to: number[]): Promise<CurrentSource> => {
+    const midLat = (from[1] + to[1]) / 2;
+    const midLng = (from[0] + to[0]) / 2;
+    const lake = nonTidalAreaAt(nonTidalAreas, midLat, midLng);
+    if (lake) return { kind: "none", reason: "nonTidal", name: lake.name };
+
+    const nearby = stationsNear(midLat, midLng, stations, MAX_STATION_KM);
+    // NOAA marks some spots "weak and variable": take it at its word if it's nearest.
+    if (nearby[0]?.type === "W") return { kind: "none", reason: "weak", name: nearby[0].name };
+
+    const candidates = nearby.filter((s) => s.type !== "W").slice(0, MAX_STATION_ATTEMPTS);
+    for (const station of candidates) {
+      if (await fetchStation(station)) {
+        return { kind: "station", stationId: station.id, name: station.name };
+      }
+    }
+    return { kind: "unavailable" };
+  };
 
   const midIdx = Math.floor(simplified.length / 2);
   const windLat = simplified[midIdx][1];
   const windLng = simplified[midIdx][0];
 
-  const [, windForecasts] = await Promise.all([
-    Promise.all(
-      Array.from(neededStations.entries()).map(async ([id]) => {
-        const preds = await fetchCurrentPredictions(id, date);
-        predictions.set(id, preds);
-      }),
-    ),
+  const [segmentCurrents, windForecasts] = await Promise.all([
+    Promise.all(simplified.slice(1).map((to, i) => resolveSegmentCurrent(simplified[i], to))),
     fetchWindForecast(windLat, windLng).catch((): WindForecast[] => []),
   ]);
 
@@ -158,10 +195,9 @@ export async function fetchTidalData(
     simplified,
     waypointVertices,
     segmentDistancesNm,
-    stations,
     predictions,
     windForecasts,
-    segmentNonTidalAreas,
+    segmentCurrents,
   };
 }
 
@@ -180,10 +216,9 @@ export function recomputeTidalRoute(
     simplified,
     waypointVertices,
     segmentDistancesNm,
-    stations,
     predictions,
     windForecasts,
-    segmentNonTidalAreas,
+    segmentCurrents,
   } = cache;
   const lastWaypoint = waypointVertices.length - 1;
   // Usually one waypoint per vertex, but two waypoints can snap to the same node.
@@ -199,15 +234,14 @@ export function recomputeTidalRoute(
     distanceNm: number;
     direction: "out" | "back";
     endWaypoints: number[];
-    /** Set for legs in a lake etc.: no current. */
-    nonTidalArea: string | null;
+    current: CurrentSource;
   };
   const legs: Leg[] = simplified.slice(1).map((to, i) => ({
     from: simplified[i],
     to,
     distanceNm: segmentDistancesNm[i],
     direction: "out",
-    nonTidalArea: segmentNonTidalAreas[i],
+    current: segmentCurrents[i],
     // Skip waypoint 0 when it shares the first vertex; it's the start, not an arrival.
     endWaypoints: (waypointsAtVertex.get(i + 1) ?? []).filter((w) => w > 0),
   }));
@@ -218,7 +252,7 @@ export function recomputeTidalRoute(
         to: simplified[i],
         distanceNm: segmentDistancesNm[i],
         direction: "back",
-        nonTidalArea: segmentNonTidalAreas[i],
+        current: segmentCurrents[i],
         endWaypoints: [...(waypointsAtVertex.get(i) ?? [])].reverse(),
       });
     }
@@ -243,16 +277,12 @@ export function recomputeTidalRoute(
   let stopHours = 0;
   let stalledSoFar = false;
 
-  for (const { from, to, distanceNm, direction, endWaypoints, nonTidalArea } of legs) {
+  for (const { from, to, distanceNm, direction, endWaypoints, current } of legs) {
     // Bearing uses the straight chord; distance follows the actual route.
     const segmentBearing = bearing(from[1], from[0], to[1], to[0]);
 
-    const midLat = (from[1] + to[1]) / 2;
-    const midLng = (from[0] + to[0]) / 2;
-    // Lakes have no tidal current, so they don't use a station at all.
-    const station = nonTidalArea ? null : findNearestStation(midLat, midLng, stations);
-
-    const stationPreds = station ? predictions.get(station.id) : undefined;
+    // Lakes, weak-and-variable spots and gaps in coverage have no current.
+    const stationPreds = current.kind === "station" ? predictions.get(current.stationId) : undefined;
     const currentAtTime = stationPreds
       ? interpolatePrediction(stationPreds, new Date(currentTime))
       : null;
@@ -298,8 +328,9 @@ export function recomputeTidalRoute(
       netSpeed,
       stalled,
       durationHours,
-      // On a lake there's no station; name the lake instead (a stall there is wind).
-      stationName: station?.name ?? nonTidalArea ?? "",
+      // A station, lake or weak-current spot; empty where there's no coverage.
+      stationName: current.kind === "unavailable" ? "" : current.name,
+      current,
       startTime: new Date(currentTime),
     });
 
@@ -338,6 +369,7 @@ export function recomputeTidalRoute(
     stopHours,
     itinerary,
     stalls: segments.filter((s) => s.stalled),
+    missingCurrentData: segmentCurrents.some((c) => c.kind === "unavailable"),
   };
 }
 
@@ -487,8 +519,19 @@ function interpolatePrediction(
   }
 
   const range = after.time.getTime() - before.time.getTime();
-  const frac = (t - before.time.getTime()) / range;
-  const velocity = before.velocity + frac * (after.velocity - before.velocity);
+  const frac = range > 0 ? (t - before.time.getTime()) / range : 0;
+  // Subordinate stations only give slack and max events hours apart. Current
+  // builds from slack to max (and eases back) roughly as a quarter sine, which a
+  // straight line would understate. For 6-minute harmonic data this makes no
+  // practical difference.
+  let velocity: number;
+  if (before.velocity === 0 && after.velocity !== 0) {
+    velocity = after.velocity * Math.sin((frac * Math.PI) / 2);
+  } else if (before.velocity !== 0 && after.velocity === 0) {
+    velocity = before.velocity * Math.cos((frac * Math.PI) / 2);
+  } else {
+    velocity = before.velocity + frac * (after.velocity - before.velocity);
+  }
 
   return {
     time,

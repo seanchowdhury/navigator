@@ -1,10 +1,19 @@
 const BASE_URL = "https://api.tidesandcurrents.noaa.gov";
 
+/**
+ * NOAA current station types:
+ * - "H" harmonic: full predictions at any interval.
+ * - "S" subordinate: only slack and max flood/ebb events (a few per tide cycle).
+ * - "W" weak and variable: no predictions; NOAA's word that current there is negligible.
+ */
+export type StationType = "H" | "S" | "W";
+
 export interface CurrentStation {
   id: string;
   name: string;
   lat: number;
   lng: number;
+  type: StationType;
 }
 
 export interface CurrentPrediction {
@@ -20,18 +29,23 @@ interface StationResponse {
     name: string;
     lat: number;
     lng: number;
+    type?: string;
   }>;
 }
 
 interface PredictionResponse {
-  current_predictions: {
-    cp: Array<{
-      Time: string;
-      Velocity_Major: number;
-      meanFloodDir: number;
-      meanEbbDir: number;
-    }>;
+  current_predictions?: {
+    // A string ("Currents are weak and variable") for weak stations.
+    cp:
+      | Array<{
+          Time: string;
+          Velocity_Major: number;
+          meanFloodDir: number;
+          meanEbbDir: number;
+        }>
+      | string;
   };
+  error?: { message: string };
 }
 
 let stationCache: CurrentStation[] | null = null;
@@ -43,12 +57,19 @@ export async function fetchCurrentStations(): Promise<CurrentStation[]> {
   const res = await fetch(url);
   const data: StationResponse = await res.json();
 
-  stationCache = data.stations.map((s) => ({
-    id: s.id,
-    name: s.name,
-    lat: s.lat,
-    lng: s.lng,
-  }));
+  // NOAA lists a station once per depth bin; predictions are per station, so keep one.
+  const byId = new Map<string, CurrentStation>();
+  for (const s of data.stations) {
+    if (byId.has(s.id)) continue;
+    byId.set(s.id, {
+      id: s.id,
+      name: s.name,
+      lat: s.lat,
+      lng: s.lng,
+      type: s.type === "S" || s.type === "W" ? s.type : "H",
+    });
+  }
+  stationCache = Array.from(byId.values());
 
   return stationCache;
 }
@@ -76,6 +97,12 @@ export async function fetchCurrentPredictions(
 
   const res = await fetch(url);
   const data: PredictionResponse = await res.json();
+
+  if (data.error || !data.current_predictions) {
+    throw new Error(data.error?.message ?? `No current predictions for station ${stationId}`);
+  }
+  // "Currents are weak and variable": no predictions to use.
+  if (typeof data.current_predictions.cp === "string") return [];
 
   return data.current_predictions.cp.map((p) => ({
     // "2026-09-30 04:06" in GMT
@@ -115,23 +142,18 @@ export function findNearestStation(
   return best;
 }
 
-/** Find unique nearest stations for route segments, deduplicating */
-export function findStationsForRoute(
-  coords: number[][],
+/** Stations within maxKm of the point, nearest first. */
+export function stationsNear(
+  lat: number,
+  lng: number,
   stations: CurrentStation[],
-): Map<string, CurrentStation> {
-  const needed = new Map<string, CurrentStation>();
-
-  for (let i = 0; i < coords.length - 1; i++) {
-    const midLat = (coords[i][1] + coords[i + 1][1]) / 2;
-    const midLng = (coords[i][0] + coords[i + 1][0]) / 2;
-    const station = findNearestStation(midLat, midLng, stations);
-    if (!needed.has(station.id)) {
-      needed.set(station.id, station);
-    }
-  }
-
-  return needed;
+  maxKm: number,
+): CurrentStation[] {
+  return stations
+    .map((station) => ({ station, km: haversineDistanceKm(lat, lng, station.lat, station.lng) }))
+    .filter(({ km }) => km <= maxKm)
+    .sort((a, b) => a.km - b.km)
+    .map(({ station }) => station);
 }
 
 function haversineDistanceKm(

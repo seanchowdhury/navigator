@@ -380,6 +380,11 @@ export default function RouteInfo({
                       {Math.round(windDelta)}m
                     </span>
                   </div>
+                  {tidalResult.missingCurrentData && (
+                    <p className="text-xs text-muted-foreground">
+                      No current predictions near part of this route; those stretches assume no current.
+                    </p>
+                  )}
                 </>
               )}
 
