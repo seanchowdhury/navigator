@@ -1,4 +1,4 @@
-import MapGL, { Marker, useMap } from "react-map-gl/maplibre";
+import MapGL, { AttributionControl, Marker, useMap } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   GeoJSONSource,
@@ -10,6 +10,7 @@ import {
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Waypoint, GraphNode, GraphEdge } from "./MapView.types";
 import RouteInfo from "./components/RouteInfo";
+import { DESKTOP_QUERY, useMediaQuery } from "../../hooks/useMediaQuery";
 import GraphEditor, { GraphMode, GraphSelection } from "./components/GraphEditor";
 import {
   fetchTidalData,
@@ -150,6 +151,7 @@ function RegionStatusPill({
   notice: string | null;
   onRetry: () => void;
 }) {
+  const isDesktop = useMediaQuery(DESKTOP_QUERY);
   let content: React.ReactNode = null;
   if (notice) {
     content = notice;
@@ -171,7 +173,13 @@ function RegionStatusPill({
     <div
       role="status"
       className="absolute left-1/2 -translate-x-1/2 z-10 rounded-full border border-border bg-background/95 text-foreground shadow-md text-sm"
-      style={{ bottom: "calc(1.5rem + env(safe-area-inset-bottom, 0px))", padding: "6px 14px" }}
+      style={{
+        // On phones the bottom of the screen belongs to the float plan sheet.
+        ...(isDesktop
+          ? { bottom: "calc(1.5rem + env(safe-area-inset-bottom, 0px))" }
+          : { top: "calc(1rem + env(safe-area-inset-top, 0px))" }),
+        padding: "6px 14px",
+      }}
     >
       {content}
     </div>
@@ -209,6 +217,7 @@ export default function MapView() {
   const workerRef = useRef<Worker | null>(null);
 
   const { routeMap } = useMap();
+  const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const [waypoints, setWaypoints] = useState<Waypoint[]>([]);
 
   const routeCoordsRef = useRef<number[][]>([]);
@@ -930,7 +939,7 @@ export default function MapView() {
 
   return (
     <div className="relative">
-      {import.meta.env.DEV && (
+      {import.meta.env.DEV && false && (
         <GraphEditor
           loaded={graphLoaded}
           loading={graphLoading}
@@ -1025,7 +1034,14 @@ export default function MapView() {
         onMouseMove={handleGraphMouseMove}
         onMouseUp={handleGraphMouseUp}
         boxZoom={!graphEditMode}
+        attributionControl={false}
       >
+        {/* On phones the bottom corners sit under the float plan sheet. */}
+        <AttributionControl
+          key={isDesktop ? "desktop" : "mobile"}
+          position={isDesktop ? "bottom-right" : "top-right"}
+          compact={!isDesktop}
+        />
         {waypoints.map((waypoint, i) => (
           <Marker
             key={waypoint.id}

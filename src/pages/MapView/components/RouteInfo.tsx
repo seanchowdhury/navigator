@@ -9,7 +9,7 @@ import WeatherSection from "./WeatherSection";
 import RouteSection from "./RouteSection";
 import RouteSheet from "./RouteSheet";
 import TripSummary from "./TripSummary";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { DESKTOP_QUERY, useMediaQuery } from "@/hooks/useMediaQuery";
 
 interface RouteInfoProps {
   totalDistance: number;
@@ -77,7 +77,7 @@ export default function RouteInfo({
     departure,
   });
 
-  const isDesktop = useMediaQuery("(min-width: 768px)");
+  const isDesktop = useMediaQuery(DESKTOP_QUERY);
 
   const regionSelect = (
     <select

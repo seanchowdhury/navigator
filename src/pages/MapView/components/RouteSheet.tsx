@@ -1,8 +1,19 @@
-import { ReactNode, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
+import { useMap } from "react-map-gl/maplibre";
 import { Drawer } from "vaul";
 
 /** Collapsed (summary only), half screen, and full screen. */
 const SNAP_POINTS = ["96px", 0.5, 1];
+
+/**
+ * Pixels of map the sheet covers at a snap point. Capped at half the screen:
+ * at full height the map is hidden anyway, and keeping the half-height view
+ * means it's where you left it when the sheet comes back down.
+ */
+function coveredPixels(snap: number | string | null) {
+  if (typeof snap === "string") return parseFloat(snap);
+  return Math.min(snap ?? 0, 0.5) * window.innerHeight;
+}
 
 interface RouteSheetProps {
   /** Always visible, including when collapsed. */
@@ -19,6 +30,22 @@ interface RouteSheetProps {
 export default function RouteSheet({ summary, headerAction, children }: RouteSheetProps) {
   const [snap, setSnap] = useState<number | string | null>(SNAP_POINTS[0]);
   const expanded = snap === 1;
+  const { routeMap } = useMap();
+
+  // Keep the camera centered in the part of the map the sheet leaves visible,
+  // so flyTo and the route land above the sheet rather than behind it.
+  useEffect(() => {
+    if (!routeMap) return;
+    routeMap.easeTo({ padding: { bottom: coveredPixels(snap) }, duration: 300 });
+  }, [routeMap, snap]);
+
+  // Switching to the desktop card unmounts the sheet; give the map back its full height.
+  useEffect(() => {
+    if (!routeMap) return;
+    return () => {
+      routeMap.easeTo({ padding: { bottom: 0 }, duration: 300 });
+    };
+  }, [routeMap]);
 
   return (
     <Drawer.Root
