@@ -51,7 +51,7 @@ export default function BestDeparture({ onSweep, onUseTime, departure, timezone 
           type="time"
           value={windowStart}
           onChange={(e) => setWindowStart(e.target.value)}
-          className="w-24 h-7 text-xs"
+          className="w-24 h-7 text-base md:text-xs"
           aria-label="Earliest departure"
         />
         <span className="text-muted-foreground">and</span>
@@ -59,7 +59,7 @@ export default function BestDeparture({ onSweep, onUseTime, departure, timezone 
           type="time"
           value={windowEnd}
           onChange={(e) => setWindowEnd(e.target.value)}
-          className="w-24 h-7 text-xs"
+          className="w-24 h-7 text-base md:text-xs"
           aria-label="Latest departure"
         />
       </div>

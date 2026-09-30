@@ -161,7 +161,7 @@ function StopInput({ minutes, onCommit, label }: { minutes: number; onCommit: (m
       onKeyDown={(e) => {
         if (e.key === "Enter") commit(e.currentTarget.value);
       }}
-      className="w-14 h-6 text-xs text-right px-1"
+      className="w-14 h-6 text-base md:text-xs text-right px-1"
       aria-label={label}
     />
   );

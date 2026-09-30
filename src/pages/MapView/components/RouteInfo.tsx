@@ -164,15 +164,21 @@ export default function RouteInfo({
 
   return (
     <Card
-      className="absolute top-4 left-4 z-10 w-84 max-h-[calc(100dvh-2rem)] overflow-auto overscroll-contain"
-      style={{ padding: 10 }}
+      className="absolute z-10 w-84 overflow-auto overscroll-contain"
+      style={{
+        padding: 10,
+        top: "calc(1rem + env(safe-area-inset-top, 0px))",
+        left: "calc(1rem + env(safe-area-inset-left, 0px))",
+        maxHeight:
+          "calc(100dvh - 2rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))",
+      }}
     >
       <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
         <CardTitle>Float Plan</CardTitle>
         <select
           value={selectedRegionId}
           onChange={(e) => onRegionSelect(e.target.value)}
-          className="border rounded px-2 py-1 text-sm bg-background"
+          className="border rounded px-2 py-1 text-base md:text-sm bg-background"
           aria-label="Region"
         >
           {regions.map((region) => (
@@ -236,7 +242,7 @@ export default function RouteInfo({
                 onChange={(e) =>
                   onVesselTypeChange(e.target.value as VesselType)
                 }
-                className="border rounded px-2 py-1 text-sm bg-background"
+                className="border rounded px-2 py-1 text-base md:text-sm bg-background"
               >
                 {Object.entries(VESSEL_LABELS).map(([value, label]) => (
                   <option key={value} value={value}>

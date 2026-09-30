@@ -1016,7 +1016,7 @@ export default function MapView() {
           longitude: DEFAULT_REGION.center.lng,
           zoom: DEFAULT_REGION.zoom,
         }}
-        style={{ height: "100vh", width: "100%" }}
+        style={{ height: "100dvh", width: "100%" }}
         mapStyle="https://tiles.openfreemap.org/styles/liberty"
         onLoad={(e) => onLoad(e)}
         onMoveEnd={(e) => updateRegionsInView(e.target)}
