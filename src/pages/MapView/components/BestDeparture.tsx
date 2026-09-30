@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { DepartureOption, DepartureSweep } from "../../../services/tidalRoute";
 import { formatClock, formatHourTick, toTimeInputValue, zonedHour } from "../../../lib/time";
 import { formatDuration } from "../../../lib/format";
@@ -15,6 +14,37 @@ const PLOT_H = HEIGHT - PAD.top - PAD.bottom;
 const LINE_COLOR = "#2563eb"; // matches the route line on the map
 const STALL_COLOR = "#dc2626"; // matches stalled legs on the map
 const BEST_COLOR = "#16a34a";
+
+/** Whole hours of the day as "HH:00" values, labelled "6 AM". */
+const HOURS = Array.from({ length: 24 }, (_, h) => ({
+  value: `${String(h).padStart(2, "0")}:00`,
+  label: `${h % 12 || 12} ${h < 12 ? "AM" : "PM"}`,
+}));
+
+function HourSelect({
+  value,
+  onChange,
+  label,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  label: string;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-7 rounded border bg-background px-2 text-base md:text-xs"
+      aria-label={label}
+    >
+      {HOURS.map((hour) => (
+        <option key={hour.value} value={hour.value}>
+          {hour.label}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 interface BestDepartureProps {
   /** Runs the sweep for a window given as "HH:MM" strings on the selected date. */
@@ -41,21 +71,9 @@ export default function BestDeparture({ onSweep, onUseTime, departure, timezone 
       <div className="font-bold text-xs uppercase tracking-wide text-foreground">Best departure</div>
       <div className="flex flex-wrap items-center gap-1 text-xs">
         <span className="text-muted-foreground">Leave between</span>
-        <Input
-          type="time"
-          value={windowStart}
-          onChange={(e) => setWindowStart(e.target.value)}
-          className="w-24 h-7 text-base md:text-xs"
-          aria-label="Earliest departure"
-        />
+        <HourSelect value={windowStart} onChange={setWindowStart} label="Earliest departure" />
         <span className="text-muted-foreground">and</span>
-        <Input
-          type="time"
-          value={windowEnd}
-          onChange={(e) => setWindowEnd(e.target.value)}
-          className="w-24 h-7 text-base md:text-xs"
-          aria-label="Latest departure"
-        />
+        <HourSelect value={windowEnd} onChange={setWindowEnd} label="Latest departure" />
       </div>
 
       {!sweep && (

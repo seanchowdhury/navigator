@@ -47,7 +47,7 @@ export default function PlanSection({
           type="date"
           value={departureDate}
           onChange={(e) => onDepartureDateChange(e.target.value)}
-          className="w-36 text-right"
+          className="w-40 text-right"
         />
       </div>
       <div className="flex justify-between items-center">
@@ -56,7 +56,7 @@ export default function PlanSection({
           type="time"
           value={departureTime}
           onChange={(e) => onDepartureTimeChange(e.target.value)}
-          className="w-28 text-right"
+          className="w-40 text-right"
         />
       </div>
       <Button
