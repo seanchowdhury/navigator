@@ -224,6 +224,8 @@ export default function MapView() {
   const [totalDistance, setTotalDistance] = useState(0);
   // Waypoint positions within routeCoordsRef, so stops line up with the route.
   const waypointCoordIndicesRef = useRef<number[]>([]);
+  // Distance of each routed leg, so undo can take the last one off totalDistance.
+  const legDistancesRef = useRef<number[]>([]);
   const [tidalLoading, setTidalLoading] = useState(false);
 
   // --- Regions ---
@@ -495,6 +497,7 @@ export default function MapView() {
           ...waypointCoordIndicesRef.current,
           routeCoordsRef.current.length - 1,
         ];
+        legDistancesRef.current = [...legDistancesRef.current, distance];
         setTotalDistance((prev) => prev + distance);
 
         (routeMap?.getSource("route") as GeoJSONSource).setData({
@@ -534,7 +537,7 @@ export default function MapView() {
   const routedWaypointCountRef = useRef(0);
   useEffect(() => {
     if (waypoints.length < routedWaypointCountRef.current) {
-      routedWaypointCountRef.current = waypoints.length; // route was cleared
+      routedWaypointCountRef.current = waypoints.length; // cleared or undone
     }
     if (waypoints.length < 2 || waypoints.length === routedWaypointCountRef.current) return;
     if (!workerRef.current || !routeRegionId) return;
@@ -924,9 +927,63 @@ export default function MapView() {
     setTidalLoading(false);
     routeCoordsRef.current = [];
     waypointCoordIndicesRef.current = [];
+    legDistancesRef.current = [];
     (routeMap?.getSource("route") as GeoJSONSource)?.setData({
       type: "FeatureCollection",
       features: [],
+    });
+  }
+
+  /** Removes the last waypoint and the leg that led to it. */
+  function undoWaypoint() {
+    const last = waypoints[waypoints.length - 1];
+    if (!last) return;
+    if (waypoints.length === 1) {
+      clearRoute();
+      return;
+    }
+
+    droppedWaypointIdsRef.current.add(last.id); // ignore its leg if it's still being routed
+    setWaypoints((prev) => prev.slice(0, -1));
+
+    // Every routed waypoint has an index; if this one has none, its leg never
+    // arrived and the drawn route doesn't include it yet.
+    const indices = waypointCoordIndicesRef.current;
+    if (indices.length !== waypoints.length) return;
+
+    if (waypoints.length === 2) {
+      // Back to a single waypoint: no route, but keep the waypoint and region.
+      routeCoordsRef.current = [];
+      waypointCoordIndicesRef.current = [];
+      legDistancesRef.current = [];
+      setTotalDistance(0);
+      setRouteNotes([]);
+      fetchIdRef.current++; // drop any in-flight tide fetch
+      setTidalCache(null);
+      setTidalLoading(false);
+    } else {
+      // The route before this leg ended at the previous waypoint's index.
+      routeCoordsRef.current = routeCoordsRef.current.slice(0, indices[indices.length - 2] + 1);
+      waypointCoordIndicesRef.current = indices.slice(0, -1);
+      const legDistance = legDistancesRef.current[legDistancesRef.current.length - 1] ?? 0;
+      legDistancesRef.current = legDistancesRef.current.slice(0, -1);
+      setTotalDistance((prev) => prev - legDistance);
+      setRouteNotes(notesAlongRoute(activeRegion, routeCoordsRef.current));
+      fetchTides(routeCoordsRef.current, waypointCoordIndicesRef.current, departureDate, activeRegion);
+    }
+
+    (routeMap?.getSource("route") as GeoJSONSource)?.setData({
+      type: "FeatureCollection",
+      features:
+        routeCoordsRef.current.length > 0
+          ? [
+              {
+                type: "Feature",
+                properties: {},
+                geometry: { type: "LineString", coordinates: routeCoordsRef.current },
+              },
+            ]
+          : [],
     });
   }
 
@@ -973,6 +1030,7 @@ export default function MapView() {
       <RouteInfo
         totalDistance={totalDistance}
         onClear={clearRoute}
+        onUndo={undoWaypoint}
         tidalResult={tidalResult}
         tidalLoading={tidalLoading}
         speedKnots={speedKnots}

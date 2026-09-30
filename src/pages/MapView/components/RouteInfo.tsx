@@ -14,6 +14,8 @@ import { DESKTOP_QUERY, useMediaQuery } from "@/hooks/useMediaQuery";
 interface RouteInfoProps {
   totalDistance: number;
   onClear: () => void;
+  /** Removes the last waypoint. */
+  onUndo: () => void;
   tidalResult: TidalRouteResult | null;
   tidalLoading: boolean;
   speedKnots: number;
@@ -44,6 +46,7 @@ interface RouteInfoProps {
 export default function RouteInfo({
   totalDistance,
   onClear,
+  onUndo,
   tidalResult,
   tidalLoading,
   speedKnots,
@@ -125,6 +128,7 @@ export default function RouteInfo({
           timezone={timezone}
           routeNotes={routeNotes}
           onClear={onClear}
+          onUndo={onUndo}
         />
       )}
     </>
@@ -133,7 +137,16 @@ export default function RouteInfo({
   if (!isDesktop) {
     return (
       <RouteSheet
-        summary={<TripSummary summary={summary} roundTrip={roundTrip} timezone={timezone} />}
+        summary={
+          <TripSummary
+            summary={summary}
+            roundTrip={roundTrip}
+            departure={departure}
+            timezone={timezone}
+            waypointCount={waypoints.length}
+            onUndo={onUndo}
+          />
+        }
         headerAction={regionSelect}
       >
         <div style={{ padding: "0 10px" }}>{sections}</div>

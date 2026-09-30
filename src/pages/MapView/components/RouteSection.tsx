@@ -1,3 +1,4 @@
+import { Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TidalRouteResult } from "../../../services/tidalRoute";
 import { formatClock } from "../../../lib/time";
@@ -21,6 +22,7 @@ interface RouteSectionProps {
   /** Region notes the route passes near (e.g. locks). */
   routeNotes: RouteNote[];
   onClear: () => void;
+  onUndo: () => void;
 }
 
 export default function RouteSection({
@@ -35,6 +37,7 @@ export default function RouteSection({
   timezone,
   routeNotes,
   onClear,
+  onUndo,
 }: RouteSectionProps) {
   const {
     displayDistance,
@@ -156,9 +159,15 @@ export default function RouteSection({
         </div>
       ))}
 
-      <Button variant="destructive" size="sm" className="w-full mt-2" onClick={onClear}>
-        Clear Route
-      </Button>
+      <div className="mt-2 flex gap-2">
+        <Button variant="outline" size="sm" className="flex-1" onClick={onUndo}>
+          <Undo2 />
+          Undo last waypoint
+        </Button>
+        <Button variant="destructive" size="sm" className="flex-1" onClick={onClear}>
+          Clear Route
+        </Button>
+      </div>
     </Section>
   );
 }

@@ -3,7 +3,7 @@ import { useMap } from "react-map-gl/maplibre";
 import { Drawer } from "vaul";
 
 /** Collapsed (summary only), half screen, and full screen. */
-const SNAP_POINTS = ["96px", 0.5, 1];
+const SNAP_POINTS = ["112px", 0.5, 1];
 
 /**
  * Pixels of map the sheet covers at a snap point. Capped at half the screen:
