@@ -16,7 +16,7 @@ export default function TripSummary({ summary, roundTrip, timezone }: TripSummar
 
   const prefix = summary.isLowerBound ? "≥ " : "";
   return (
-    <div className="flex items-center gap-2 text-sm">
+    <div className="flex items-center justify-center gap-2 text-sm">
       {summary.isLowerBound && (
         <span className="text-red-600" title="Current stronger than your speed">
           ⚠

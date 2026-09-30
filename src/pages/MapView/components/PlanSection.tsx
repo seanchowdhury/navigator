@@ -83,7 +83,8 @@ export default function PlanSection({
         <select
           value={vesselType}
           onChange={(e) => onVesselTypeChange(e.target.value as VesselType)}
-          className="border rounded px-2 py-1 text-base md:text-sm bg-background"
+          className="border rounded text-base md:text-sm bg-background"
+          style={{ padding: "4px 8px" }}
         >
           {Object.entries(VESSEL_LABELS).map(([value, label]) => (
             <option key={value} value={value}>
@@ -92,7 +93,7 @@ export default function PlanSection({
           ))}
         </select>
       </div>
-      <div className="space-y-1">
+      <div className="flex flex-col gap-2">
         <div className="flex justify-between">
           <span className="text-muted-foreground">Est. Speed</span>
           <span className="font-medium">{speedKnots} knots</span>

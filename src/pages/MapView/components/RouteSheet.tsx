@@ -64,13 +64,18 @@ export default function RouteSheet({ summary, headerAction, children }: RouteShe
           onOpenAutoFocus={(e) => e.preventDefault()}
           className="fixed inset-x-0 bottom-0 z-10 flex h-full max-h-[97%] flex-col rounded-t-xl border-t border-border bg-background text-foreground shadow-[0_-4px_16px_rgba(0,0,0,0.12)] outline-none"
         >
-          <div className="mx-auto mt-2 mb-2 h-1.5 w-12 shrink-0 rounded-full bg-muted-foreground/30" />
-          <div className="shrink-0 px-4 pb-3">{summary}</div>
+          <div
+            className="h-1.5 w-12 shrink-0 self-center rounded-full bg-muted-foreground/30"
+            style={{ margin: "8px 0" }}
+          />
+          <div className="shrink-0" style={{ padding: "0 16px 12px" }}>
+            {summary}
+          </div>
           <div
             className={`flex-1 text-sm ${expanded ? "overflow-y-auto overscroll-contain" : "overflow-hidden"}`}
             style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom, 0px))" }}
           >
-            <div className="flex items-center justify-between gap-2 px-4">
+            <div className="flex items-center justify-between gap-2" style={{ padding: "0 16px" }}>
               <Drawer.Title className="font-heading text-base font-medium">Float Plan</Drawer.Title>
               {headerAction}
             </div>

@@ -83,7 +83,8 @@ export default function RouteInfo({
     <select
       value={selectedRegionId}
       onChange={(e) => onRegionSelect(e.target.value)}
-      className="border rounded px-2 py-1 text-base md:text-sm bg-background"
+      className="border rounded text-base md:text-sm bg-background"
+      style={{ padding: "4px 8px" }}
       aria-label="Region"
     >
       {regions.map((region) => (
@@ -135,7 +136,7 @@ export default function RouteInfo({
         summary={<TripSummary summary={summary} roundTrip={roundTrip} timezone={timezone} />}
         headerAction={regionSelect}
       >
-        <div className="px-2.5">{sections}</div>
+        <div style={{ padding: "0 10px" }}>{sections}</div>
       </RouteSheet>
     );
   }
