@@ -7,6 +7,9 @@ import { Region, RouteNote } from "../../../regions";
 import PlanSection from "./PlanSection";
 import WeatherSection from "./WeatherSection";
 import RouteSection from "./RouteSection";
+import RouteSheet from "./RouteSheet";
+import TripSummary from "./TripSummary";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 
 interface RouteInfoProps {
   totalDistance: number;
@@ -74,6 +77,69 @@ export default function RouteInfo({
     departure,
   });
 
+  const isDesktop = useMediaQuery("(min-width: 768px)");
+
+  const regionSelect = (
+    <select
+      value={selectedRegionId}
+      onChange={(e) => onRegionSelect(e.target.value)}
+      className="border rounded px-2 py-1 text-base md:text-sm bg-background"
+      aria-label="Region"
+    >
+      {regions.map((region) => (
+        <option key={region.id} value={region.id}>
+          {region.name}
+        </option>
+      ))}
+    </select>
+  );
+
+  const sections = (
+    <>
+      <PlanSection
+        hasRoute={summary.hasRoute}
+        departureDate={departureDate}
+        onDepartureDateChange={onDepartureDateChange}
+        departureTime={departureTime}
+        onDepartureTimeChange={onDepartureTimeChange}
+        onSweepDepartures={onSweepDepartures}
+        departure={departure}
+        timezone={timezone}
+        vesselType={vesselType}
+        onVesselTypeChange={onVesselTypeChange}
+        speedKnots={speedKnots}
+        onSpeedChange={onSpeedChange}
+      />
+      <WeatherSection weather={weather} />
+      {summary.hasRoute && (
+        <RouteSection
+          summary={summary}
+          tidalResult={tidalResult}
+          tidalLoading={tidalLoading}
+          roundTrip={roundTrip}
+          onRoundTripChange={onRoundTripChange}
+          waypoints={waypoints}
+          onStopChange={onStopChange}
+          departure={departure}
+          timezone={timezone}
+          routeNotes={routeNotes}
+          onClear={onClear}
+        />
+      )}
+    </>
+  );
+
+  if (!isDesktop) {
+    return (
+      <RouteSheet
+        summary={<TripSummary summary={summary} roundTrip={roundTrip} timezone={timezone} />}
+        headerAction={regionSelect}
+      >
+        <div className="px-2.5">{sections}</div>
+      </RouteSheet>
+    );
+  }
+
   return (
     <Card
       className="absolute z-10 w-84 overflow-auto overscroll-contain"
@@ -87,52 +153,10 @@ export default function RouteInfo({
     >
       <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
         <CardTitle>Float Plan</CardTitle>
-        <select
-          value={selectedRegionId}
-          onChange={(e) => onRegionSelect(e.target.value)}
-          className="border rounded px-2 py-1 text-base md:text-sm bg-background"
-          aria-label="Region"
-        >
-          {regions.map((region) => (
-            <option key={region.id} value={region.id}>
-              {region.name}
-            </option>
-          ))}
-        </select>
+        {regionSelect}
       </CardHeader>
       <CardContent>
-        <div className="text-sm">
-          <PlanSection
-            hasRoute={summary.hasRoute}
-            departureDate={departureDate}
-            onDepartureDateChange={onDepartureDateChange}
-            departureTime={departureTime}
-            onDepartureTimeChange={onDepartureTimeChange}
-            onSweepDepartures={onSweepDepartures}
-            departure={departure}
-            timezone={timezone}
-            vesselType={vesselType}
-            onVesselTypeChange={onVesselTypeChange}
-            speedKnots={speedKnots}
-            onSpeedChange={onSpeedChange}
-          />
-          <WeatherSection weather={weather} />
-          {summary.hasRoute && (
-            <RouteSection
-              summary={summary}
-              tidalResult={tidalResult}
-              tidalLoading={tidalLoading}
-              roundTrip={roundTrip}
-              onRoundTripChange={onRoundTripChange}
-              waypoints={waypoints}
-              onStopChange={onStopChange}
-              departure={departure}
-              timezone={timezone}
-              routeNotes={routeNotes}
-              onClear={onClear}
-            />
-          )}
-        </div>
+        <div className="text-sm">{sections}</div>
       </CardContent>
     </Card>
   );
