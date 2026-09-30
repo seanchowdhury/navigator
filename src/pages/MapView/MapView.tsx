@@ -939,7 +939,7 @@ export default function MapView() {
 
   return (
     <div className="relative">
-      {import.meta.env.DEV && false && (
+      {import.meta.env.DEV && (
         <GraphEditor
           loaded={graphLoaded}
           loading={graphLoading}
