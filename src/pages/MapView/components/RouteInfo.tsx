@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import {
   DepartureSweep,
   TidalRouteResult,
-  TidalSegment,
   VesselType,
   VESSEL_LABELS,
 } from "../../../services/tidalRoute";
@@ -15,77 +14,10 @@ import { ArrowUp, Clock } from "lucide-react";
 import BestDeparture from "./BestDeparture";
 import Itinerary from "./Itinerary";
 import { Waypoint } from "../MapView.types";
+import { summarizeRoute } from "../routeSummary";
 import { formatClock } from "../../../lib/time";
+import { degreesToCompass, formatDistance, formatDuration } from "../../../lib/format";
 import { Region, RouteNote } from "../../../regions";
-
-function formatDistance(meters: number) {
-  const miles = meters / 1609.344;
-  return `${miles.toFixed(2)} mi`;
-}
-
-function getTravelHours(meters: number, knots: number) {
-  return meters / 1852 / knots;
-}
-
-function formatDuration(hours: number) {
-  const h = Math.floor(hours);
-  const m = Math.round((hours - h) * 60);
-  if (h === 0) return `${m}m`;
-  return `${h}h ${m}m`;
-}
-
-function getEndTime(departure: Date, travelHours: number, timeZone: string) {
-  return formatClock(new Date(departure.getTime() + travelHours * 60 * 60 * 1000), timeZone);
-}
-
-/** Groups consecutive stalled segments into stretches of the route. */
-function getStallStretches(segments: TidalSegment[]): TidalSegment[][] {
-  const stretches: TidalSegment[][] = [];
-  let current: TidalSegment[] = [];
-  for (const segment of segments) {
-    if (segment.stalled) {
-      current.push(segment);
-    } else if (current.length > 0) {
-      stretches.push(current);
-      current = [];
-    }
-  }
-  if (current.length > 0) stretches.push(current);
-  return stretches;
-}
-
-/** Stop minutes that apply to the trip (mirrors the stop rules in recomputeTidalRoute). */
-function totalStopMinutes(waypoints: Waypoint[], roundTrip: boolean) {
-  const last = waypoints.length - 1;
-  return waypoints.reduce((sum, w, i) => {
-    if (i === 0) return sum;
-    const out = i < last || roundTrip ? w.stopMinutes : 0;
-    const back = roundTrip && i < last ? w.returnStopMinutes : 0;
-    return sum + out + back;
-  }, 0);
-}
-
-function degreesToCompass(deg: number): string {
-  const dirs = [
-    "N",
-    "NNE",
-    "NE",
-    "ENE",
-    "E",
-    "ESE",
-    "SE",
-    "SSE",
-    "S",
-    "SSW",
-    "SW",
-    "WSW",
-    "W",
-    "WNW",
-    "NW",
-    "NNW",
-  ];
-  return dirs[Math.round(deg / 22.5) % 16];
-}
 
 interface RouteInfoProps {
   totalDistance: number;
@@ -144,23 +76,28 @@ export default function RouteInfo({
   routeNotes,
 }: RouteInfoProps) {
   const [showBestDeparture, setShowBestDeparture] = useState(false);
-  // Once tides are computed, show the same route length the timings are based on.
-  // totalDistance is the drawn (outbound) route; a round trip covers it twice.
-  const tripDistance = roundTrip ? totalDistance * 2 : totalDistance;
-  const displayDistance = tidalResult ? tidalResult.totalDistanceNm * 1852 : tripDistance;
-  const fallbackStopHours = totalStopMinutes(waypoints, roundTrip) / 60;
-  const baseTravelHours = getTravelHours(tripDistance, speedKnots) + fallbackStopHours;
-  const stopHours = tidalResult ? tidalResult.stopHours : fallbackStopHours;
-  const adjustedHours = tidalResult?.totalDurationHours ?? baseTravelHours;
-  const tideDelta = tidalResult?.tideDeltaMinutes ?? 0;
-  const windDelta = tidalResult?.windDeltaMinutes ?? 0;
-  const hasRoute = totalDistance > 0;
-  const stallStretches =
-    tidalResult && !tidalLoading ? getStallStretches(tidalResult.segments) : [];
+  const {
+    hasRoute,
+    displayDistance,
+    durationHours,
+    stopHours,
+    arrival,
+    tideDeltaMinutes: tideDelta,
+    windDeltaMinutes: windDelta,
+    stallStretches,
+    worstFirstStall,
+    isLowerBound,
+  } = summarizeRoute({
+    totalDistance,
+    tidalResult,
+    tidalLoading,
+    speedKnots,
+    roundTrip,
+    waypoints,
+    departure,
+  });
   const firstStall = stallStretches[0];
-  const worstFirstStall = firstStall?.reduce((a, b) => (b.netSpeed < a.netSpeed ? b : a));
-  // When the boat can't make headway, durations are a lower bound, not an estimate.
-  const durationPrefix = stallStretches.length > 0 ? "≥ " : "";
+  const durationPrefix = isLowerBound ? "≥ " : "";
 
   return (
     <Card
@@ -337,7 +274,7 @@ export default function RouteInfo({
                 <span className="text-muted-foreground">Duration</span>
                 <span className="font-medium">
                   {durationPrefix}
-                  {formatDuration(adjustedHours)}
+                  {formatDuration(durationHours)}
                   {stopHours > 0 && (
                     <span className="text-muted-foreground font-normal"> incl. {formatDuration(stopHours)} stopped</span>
                   )}
@@ -347,7 +284,7 @@ export default function RouteInfo({
                 <span className="text-muted-foreground">{roundTrip ? "Est. Return" : "Est. Arrival"}</span>
                 <span className="font-medium">
                   {durationPrefix}
-                  {getEndTime(departure, adjustedHours, timezone)}
+                  {formatClock(arrival, timezone)}
                 </span>
               </div>
 

@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DepartureOption, DepartureSweep } from "../../../services/tidalRoute";
 import { formatClock, formatHourTick, toTimeInputValue, zonedHour } from "../../../lib/time";
+import { formatDuration } from "../../../lib/format";
 
 // Chart geometry (SVG user units; the SVG scales to the panel width).
 const WIDTH = 300;
@@ -14,13 +15,6 @@ const PLOT_H = HEIGHT - PAD.top - PAD.bottom;
 const LINE_COLOR = "#2563eb"; // matches the route line on the map
 const STALL_COLOR = "#dc2626"; // matches stalled legs on the map
 const BEST_COLOR = "#16a34a";
-
-function formatDuration(hours: number) {
-  const h = Math.floor(hours);
-  const m = Math.round((hours - h) * 60);
-  if (h === 0) return `${m}m`;
-  return `${h}h ${m}m`;
-}
 
 interface BestDepartureProps {
   /** Runs the sweep for a window given as "HH:MM" strings on the selected date. */
