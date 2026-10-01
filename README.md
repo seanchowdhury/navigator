@@ -1,6 +1,6 @@
 # Navigator
 
-https://navigator.seanc.how
+https://goodtid.ing
 
 This project is an attempt to create a serverless float planner for the Village Community Boathouse and other NYC based boathouses.
 
