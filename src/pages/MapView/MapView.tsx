@@ -2,6 +2,7 @@ import MapGL, { AttributionControl, Marker, useMap } from "react-map-gl/maplibre
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   GeoJSONSource,
+  LngLatBounds,
   Map as MapLibreMap,
   MapLayerMouseEvent,
   MapLibreEvent,
@@ -10,6 +11,8 @@ import {
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Waypoint, GraphNode, GraphEdge } from "./MapView.types";
 import RouteInfo from "./components/RouteInfo";
+import FloatPlanCard from "./components/FloatPlanCard";
+import { summarizeRoute } from "./routeSummary";
 import { DESKTOP_QUERY, useMediaQuery } from "../../hooks/useMediaQuery";
 import GraphEditor, { GraphMode, GraphSelection } from "./components/GraphEditor";
 import {
@@ -934,6 +937,36 @@ export default function MapView() {
     });
   }
 
+  /** Share mode swaps the editing UI for the float plan card, for a screenshot. */
+  const [sharing, setSharing] = useState(false);
+  const [shareCardHeight, setShareCardHeight] = useState(0);
+
+  // Fit the whole route into the map above the card (refits if the card grows,
+  // e.g. when the forecast arrives).
+  useEffect(() => {
+    if (!sharing || !routeMap || shareCardHeight === 0) return;
+    const coords = routeCoordsRef.current as [number, number][];
+    if (coords.length === 0) return;
+    const bounds = coords.reduce(
+      (b, coord) => b.extend(coord),
+      new LngLatBounds(coords[0], coords[0]),
+    );
+    // Start from no padding: the sheet's padding would otherwise add to the card's.
+    routeMap.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
+    const bottom = Math.min(shareCardHeight + 32, window.innerHeight * 0.75);
+    routeMap.fitBounds(bounds, {
+      padding: { top: 56, left: 40, right: 40, bottom },
+      duration: 500,
+    });
+  }, [sharing, routeMap, shareCardHeight]);
+
+  function stopSharing() {
+    // The sheet sets its own padding again when it comes back.
+    routeMap?.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
+    setSharing(false);
+    setShareCardHeight(0);
+  }
+
   /** Removes the last waypoint and the leg that led to it. */
   function undoWaypoint() {
     const last = waypoints[waypoints.length - 1];
@@ -996,7 +1029,7 @@ export default function MapView() {
 
   return (
     <div className="relative">
-      {import.meta.env.DEV && (
+      {import.meta.env.DEV && !sharing && (
         <GraphEditor
           loaded={graphLoaded}
           loading={graphLoading}
@@ -1027,55 +1060,83 @@ export default function MapView() {
           onClearSelection={() => setGraphSelection(null)}
         />
       )}
-      <RouteInfo
-        totalDistance={totalDistance}
-        onClear={clearRoute}
-        onUndo={undoWaypoint}
-        tidalResult={tidalResult}
-        tidalLoading={tidalLoading}
-        speedKnots={speedKnots}
-        onSpeedChange={(speed) => {
-          setSpeedKnots(speed);
-        }}
-        departureTime={departureTime}
-        onDepartureTimeChange={(time) => {
-          setDepartureTime(time);
-        }}
-        departureDate={departureDate}
-        onDepartureDateChange={(date) => {
-          setDepartureDate(date);
-          // Date change needs fresh API data
-          fetchTides(routeCoordsRef.current, waypointCoordIndicesRef.current, date, activeRegion);
-        }}
-        vesselType={vesselType}
-        onVesselTypeChange={(vessel) => {
-          setVesselType(vessel);
-        }}
-        roundTrip={roundTrip}
-        onRoundTripChange={setRoundTrip}
-        waypoints={waypoints}
-        onStopChange={updateStop}
-        weather={weather}
-        onSweepDepartures={sweepDepartureWindow}
-        departure={departure}
-        timezone={timezone}
-        regions={REGIONS}
-        selectedRegionId={viewRegionId ?? activeRegion.id}
-        onRegionSelect={(id) => {
-          const region = regionById(id);
-          if (!region) return;
-          ensureRegionLoaded(region);
-          setViewRegionId(region.id);
-          routeMap?.flyTo({ center: [region.center.lng, region.center.lat], zoom: region.zoom });
-        }}
-        routeNotes={routeNotes}
-      />
-      <RegionStatusPill
-        region={regionStatus[activeRegion.id] ? activeRegion : null}
-        status={regionStatus[activeRegion.id]}
-        notice={notice}
-        onRetry={() => ensureRegionLoaded(activeRegion)}
-      />
+      {sharing && (
+        <FloatPlanCard
+          summary={summarizeRoute({
+            totalDistance,
+            tidalResult,
+            tidalLoading,
+            speedKnots,
+            roundTrip,
+            waypoints,
+            departure,
+          })}
+          tidalResult={tidalResult}
+          tidalLoading={tidalLoading}
+          waypoints={waypoints}
+          roundTrip={roundTrip}
+          departure={departure}
+          timezone={timezone}
+          weather={weather}
+          routeNotes={routeNotes}
+          onDone={stopSharing}
+          onHeightChange={setShareCardHeight}
+        />
+      )}
+      {!sharing && (
+        <RouteInfo
+          totalDistance={totalDistance}
+          onClear={clearRoute}
+          onUndo={undoWaypoint}
+          onShare={() => setSharing(true)}
+          tidalResult={tidalResult}
+          tidalLoading={tidalLoading}
+          speedKnots={speedKnots}
+          onSpeedChange={(speed) => {
+            setSpeedKnots(speed);
+          }}
+          departureTime={departureTime}
+          onDepartureTimeChange={(time) => {
+            setDepartureTime(time);
+          }}
+          departureDate={departureDate}
+          onDepartureDateChange={(date) => {
+            setDepartureDate(date);
+            // Date change needs fresh API data
+            fetchTides(routeCoordsRef.current, waypointCoordIndicesRef.current, date, activeRegion);
+          }}
+          vesselType={vesselType}
+          onVesselTypeChange={(vessel) => {
+            setVesselType(vessel);
+          }}
+          roundTrip={roundTrip}
+          onRoundTripChange={setRoundTrip}
+          waypoints={waypoints}
+          onStopChange={updateStop}
+          weather={weather}
+          onSweepDepartures={sweepDepartureWindow}
+          departure={departure}
+          timezone={timezone}
+          regions={REGIONS}
+          selectedRegionId={viewRegionId ?? activeRegion.id}
+          onRegionSelect={(id) => {
+            const region = regionById(id);
+            if (!region) return;
+            ensureRegionLoaded(region);
+            setViewRegionId(region.id);
+            routeMap?.flyTo({ center: [region.center.lng, region.center.lat], zoom: region.zoom });
+          }}
+          routeNotes={routeNotes}
+        />
+      )}
+      {!sharing && (
+        <RegionStatusPill
+          region={regionStatus[activeRegion.id] ? activeRegion : null}
+          status={regionStatus[activeRegion.id]}
+          notice={notice}
+          onRetry={() => ensureRegionLoaded(activeRegion)}
+        />
+      )}
       <MapGL
         id="routeMap"
         initialViewState={{

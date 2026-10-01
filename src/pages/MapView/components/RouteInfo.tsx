@@ -19,6 +19,8 @@ interface RouteInfoProps {
   onClear: () => void;
   /** Removes the last waypoint. */
   onUndo: () => void;
+  /** Shows the float plan card for a screenshot. */
+  onShare: () => void;
   tidalResult: TidalRouteResult | null;
   tidalLoading: boolean;
   speedKnots: number;
@@ -50,6 +52,7 @@ export default function RouteInfo({
   totalDistance,
   onClear,
   onUndo,
+  onShare,
   tidalResult,
   tidalLoading,
   speedKnots,
@@ -132,6 +135,7 @@ export default function RouteInfo({
           routeNotes={routeNotes}
           onClear={onClear}
           onUndo={onUndo}
+          onShare={onShare}
         />
       )}
       <p className="py-2 text-center text-xs text-muted-foreground">
@@ -159,6 +163,7 @@ export default function RouteInfo({
             timezone={timezone}
             waypointCount={waypoints.length}
             onUndo={onUndo}
+            onShare={onShare}
           />
         }
         headerAction={regionSelect}

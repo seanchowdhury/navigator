@@ -67,6 +67,11 @@ export function formatClock(date: Date, timeZone: string) {
   return date.toLocaleTimeString([], { timeZone, hour: "numeric", minute: "2-digit" });
 }
 
+/** "Wed, Oct 1" in `timeZone`. */
+export function formatDay(date: Date, timeZone: string) {
+  return date.toLocaleDateString([], { timeZone, weekday: "short", month: "short", day: "numeric" });
+}
+
 /** "9am" / "12pm" in `timeZone`, for chart ticks. */
 export function formatHourTick(date: Date, timeZone: string) {
   return date

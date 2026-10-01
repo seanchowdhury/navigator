@@ -1,4 +1,4 @@
-import { Undo2 } from "lucide-react";
+import { Share, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TidalRouteResult } from "../../../services/tidalRoute";
 import { formatClock } from "../../../lib/time";
@@ -7,6 +7,7 @@ import { RouteNote } from "../../../regions";
 import { Waypoint } from "../MapView.types";
 import { RouteSummary } from "../routeSummary";
 import Itinerary from "./Itinerary";
+import RouteWarnings from "./RouteWarnings";
 import Section from "./Section";
 
 interface RouteSectionProps {
@@ -23,6 +24,7 @@ interface RouteSectionProps {
   routeNotes: RouteNote[];
   onClear: () => void;
   onUndo: () => void;
+  onShare: () => void;
 }
 
 export default function RouteSection({
@@ -38,6 +40,7 @@ export default function RouteSection({
   routeNotes,
   onClear,
   onUndo,
+  onShare,
 }: RouteSectionProps) {
   const {
     displayDistance,
@@ -46,11 +49,8 @@ export default function RouteSection({
     arrival,
     tideDeltaMinutes: tideDelta,
     windDeltaMinutes: windDelta,
-    stallStretches,
-    worstFirstStall,
     isLowerBound,
   } = summary;
-  const firstStall = stallStretches[0];
   const durationPrefix = isLowerBound ? "≥ " : "";
 
   return (
@@ -127,39 +127,13 @@ export default function RouteSection({
         </>
       )}
 
-      {firstStall && worstFirstStall && (
-        <div
-          className="rounded-md border border-red-300 bg-red-50 text-red-800 text-xs space-y-1"
-          style={{ padding: 6 }}
-        >
-          <div className="font-bold">⚠ Current stronger than your speed</div>
-          <div>
-            Near {firstStall[0].stationName}, around{" "}
-            {formatClock(firstStall[0].startTime, timezone)}
-            ,{" "}
-            {worstFirstStall.netSpeed < 0
-              ? `you'd be pushed back at ${Math.abs(worstFirstStall.netSpeed).toFixed(1)} kts`
-              : `you'd make only ${worstFirstStall.netSpeed.toFixed(1)} kts`}
-            .
-            {stallStretches.length > 1 &&
-              ` +${stallStretches.length - 1} more stretch${stallStretches.length > 2 ? "es" : ""}.`}
-          </div>
-          <div>Try another departure time or a faster speed.</div>
-        </div>
-      )}
+      <RouteWarnings summary={summary} routeNotes={routeNotes} timezone={timezone} />
 
-      {routeNotes.map((note) => (
-        <div
-          key={note.name}
-          className="rounded-md border border-amber-300 bg-amber-50 text-amber-900 text-xs space-y-1"
-          style={{ padding: 6 }}
-        >
-          <div className="font-bold">ⓘ {note.name}</div>
-          <div>{note.message}</div>
-        </div>
-      ))}
-
-      <div className="mt-2 flex gap-2">
+      <Button size="sm" className="mt-2 w-full" onClick={onShare}>
+        <Share />
+        Share float plan
+      </Button>
+      <div className="flex gap-2">
         <Button variant="outline" size="sm" className="flex-1" onClick={onUndo}>
           <Undo2 />
           Undo last waypoint
