@@ -11,6 +11,9 @@ import RouteSheet from "./RouteSheet";
 import TripSummary from "./TripSummary";
 import { DESKTOP_QUERY, useMediaQuery } from "@/hooks/useMediaQuery";
 
+const FEEDBACK_URL =
+  "https://docs.google.com/forms/d/e/1FAIpQLSfUTkosdeAhwBBKAguprepGYbdD1145KtpQ--Ahzc7BvbM5Sg/viewform";
+
 interface RouteInfoProps {
   totalDistance: number;
   onClear: () => void;
@@ -131,6 +134,17 @@ export default function RouteInfo({
           onUndo={onUndo}
         />
       )}
+      <p className="py-2 text-center text-xs text-muted-foreground">
+        Something wrong or an idea?{" "}
+        <a
+          href={FEEDBACK_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-foreground underline underline-offset-2"
+        >
+          Send feedback
+        </a>
+      </p>
     </>
   );
 
