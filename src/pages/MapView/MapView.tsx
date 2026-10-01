@@ -13,6 +13,7 @@ import { Waypoint, GraphNode, GraphEdge } from "./MapView.types";
 import RouteInfo from "./components/RouteInfo";
 import FloatPlanCard from "./components/FloatPlanCard";
 import { summarizeRoute } from "./routeSummary";
+import { captureImage } from "../../lib/shareImage";
 import { DESKTOP_QUERY, useMediaQuery } from "../../hooks/useMediaQuery";
 import GraphEditor, { GraphMode, GraphSelection } from "./components/GraphEditor";
 import {
@@ -940,9 +941,14 @@ export default function MapView() {
   /** Share mode swaps the editing UI for the float plan card, for a screenshot. */
   const [sharing, setSharing] = useState(false);
   const [shareCardHeight, setShareCardHeight] = useState(0);
+  const [shareImage, setShareImage] = useState<File | null>(null);
+  const [shareImageFailed, setShareImageFailed] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   // Fit the whole route into the map above the card (refits if the card grows,
-  // e.g. when the forecast arrives).
+  // e.g. when the forecast arrives), then capture the screen as the share image.
+  // Capturing up front matters: browsers only open the share sheet straight from
+  // a tap, with no time to render an image in between.
   useEffect(() => {
     if (!sharing || !routeMap || shareCardHeight === 0) return;
     const coords = routeCoordsRef.current as [number, number][];
@@ -958,6 +964,26 @@ export default function MapView() {
       padding: { top: 56, left: 40, right: 40, bottom },
       duration: 500,
     });
+
+    let cancelled = false;
+    setShareImage(null);
+    // Once the camera has settled and its tiles are drawn. The repaint makes sure
+    // "idle" still fires if the fit didn't need to move the map.
+    routeMap.once("idle", () => {
+      if (cancelled || !rootRef.current) return;
+      captureImage(rootRef.current, "float-plan.png")
+        .then((file) => {
+          if (!cancelled) setShareImage(file);
+        })
+        .catch((e) => {
+          console.error("Couldn't capture the float plan:", e);
+          if (!cancelled) setShareImageFailed(true);
+        });
+    });
+    routeMap.triggerRepaint();
+    return () => {
+      cancelled = true;
+    };
   }, [sharing, routeMap, shareCardHeight]);
 
   function stopSharing() {
@@ -965,6 +991,8 @@ export default function MapView() {
     routeMap?.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
     setSharing(false);
     setShareCardHeight(0);
+    setShareImage(null);
+    setShareImageFailed(false);
   }
 
   /** Removes the last waypoint and the leg that led to it. */
@@ -1028,7 +1056,7 @@ export default function MapView() {
     graphSelection?.type === "edge" ? graphEdgesRef.current[graphSelection.index] ?? null : null;
 
   return (
-    <div className="relative">
+    <div ref={rootRef} className="relative">
       {import.meta.env.DEV && !sharing && (
         <GraphEditor
           loaded={graphLoaded}
@@ -1080,6 +1108,8 @@ export default function MapView() {
           weather={weather}
           routeNotes={routeNotes}
           onDone={stopSharing}
+          image={shareImage}
+          imageFailed={shareImageFailed}
           onHeightChange={setShareCardHeight}
         />
       )}
@@ -1154,12 +1184,15 @@ export default function MapView() {
         onMouseUp={handleGraphMouseUp}
         boxZoom={!graphEditMode}
         attributionControl={false}
+        // Lets the share image read the map back; WebGL clears it after each frame otherwise.
+        canvasContextAttributes={{ preserveDrawingBuffer: true }}
       >
-        {/* On phones the bottom corners sit under the float plan sheet. */}
+        {/* On phones the bottom corners sit under the float plan sheet. Shared
+            plans spell the attribution out, since the map data's license needs it. */}
         <AttributionControl
-          key={isDesktop ? "desktop" : "mobile"}
+          key={`${isDesktop ? "desktop" : "mobile"}-${sharing ? "sharing" : "editing"}`}
           position={isDesktop ? "bottom-right" : "top-right"}
-          compact={!isDesktop}
+          compact={!isDesktop && !sharing}
         />
         {waypoints.map((waypoint, i) => (
           <Marker

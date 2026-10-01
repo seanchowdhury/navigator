@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Share } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TidalRouteResult } from "../../../services/tidalRoute";
 import { WindForecast, weatherEmoji } from "../../../services/nws";
 import { formatClock, formatDay } from "../../../lib/time";
+import { canShareFile, EXCLUDE_FROM_IMAGE, shareFile } from "../../../lib/shareImage";
 import { degreesToCompass, formatDistance, formatDuration } from "../../../lib/format";
 import { RouteNote } from "../../../regions";
 import { Waypoint } from "../MapView.types";
@@ -21,6 +23,10 @@ interface FloatPlanCardProps {
   weather: WindForecast | null;
   routeNotes: RouteNote[];
   onDone: () => void;
+  /** The plan as a PNG, once it's been captured. */
+  image: File | null;
+  /** Capturing failed; fall back to asking for a screenshot. */
+  imageFailed: boolean;
   /** Reports the card's height so the map can fit the route above it. */
   onHeightChange: (height: number) => void;
 }
@@ -56,7 +62,7 @@ function formatMinutesDelta(minutes: number) {
   return `${rounded > 0 ? "+" : rounded < 0 ? "−" : ""}${Math.abs(rounded)} min`;
 }
 
-/** The float plan laid out to fit one phone screen, for sharing as a screenshot. */
+/** The float plan laid out to fit one phone screen, shared as an image of the screen. */
 export default function FloatPlanCard({
   summary,
   tidalResult,
@@ -68,6 +74,8 @@ export default function FloatPlanCard({
   weather,
   routeNotes,
   onDone,
+  image,
+  imageFailed,
   onHeightChange,
 }: FloatPlanCardProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -94,7 +102,7 @@ export default function FloatPlanCard({
 
   return (
     <>
-      <ScreenshotHint />
+      {imageFailed && <ScreenshotHint />}
       <div
         ref={ref}
         className="fixed inset-x-0 bottom-0 z-10 flex flex-col gap-3 rounded-t-2xl border-t border-border bg-background px-5 pt-4 text-foreground shadow-[0_-4px_16px_rgba(0,0,0,0.12)] md:inset-x-auto md:bottom-4 md:left-1/2 md:w-md md:-translate-x-1/2 md:rounded-2xl md:border"
@@ -104,9 +112,21 @@ export default function FloatPlanCard({
           <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
             Float Plan · {formatDay(departure, timezone)}
           </div>
-          <Button variant="ghost" size="sm" onClick={onDone}>
-            Done
-          </Button>
+          <div className="flex items-center gap-1" {...{ [EXCLUDE_FROM_IMAGE]: "" }}>
+            {!imageFailed && (
+              <Button
+                size="sm"
+                disabled={!image}
+                onClick={() => image && shareFile(image, "Float plan")}
+              >
+                <Share />
+                {!image ? "Preparing…" : canShareFile(image) ? "Share" : "Save image"}
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={onDone}>
+              Done
+            </Button>
+          </div>
         </div>
 
         <div className="flex flex-col gap-1">
