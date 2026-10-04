@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,21 +43,11 @@ export default function PlanSection({
     <Section title="Departure">
       <div className="flex justify-between items-center">
         <span className="text-muted-foreground">Date</span>
-        <Input
-          type="date"
-          value={departureDate}
-          onChange={(e) => onDepartureDateChange(e.target.value)}
-          className="w-40 text-right"
-        />
+        <DateTimeInput type="date" value={departureDate} onCommit={onDepartureDateChange} />
       </div>
       <div className="flex justify-between items-center">
         <span className="text-muted-foreground">Time</span>
-        <Input
-          type="time"
-          value={departureTime}
-          onChange={(e) => onDepartureTimeChange(e.target.value)}
-          className="w-40 text-right"
-        />
+        <DateTimeInput type="time" value={departureTime} onCommit={onDepartureTimeChange} />
       </div>
       <Button
         size="sm"
@@ -107,5 +97,41 @@ export default function PlanSection({
         />
       </div>
     </Section>
+  );
+}
+
+/**
+ * Date or time input that keeps its own draft while editing and only commits
+ * complete values. A half-edited field reads as "" (clearing one part of the
+ * time, say), which isn't a departure anything downstream can use.
+ */
+function DateTimeInput({
+  type,
+  value,
+  onCommit,
+}: {
+  type: "date" | "time";
+  value: string;
+  onCommit: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+
+  // Follow outside changes (e.g. picking a best departure time).
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  return (
+    <Input
+      type={type}
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        if (e.target.value) onCommit(e.target.value);
+      }}
+      // Left incomplete: show the departure still in use.
+      onBlur={() => setDraft(value)}
+      className="w-40 text-right"
+    />
   );
 }
