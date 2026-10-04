@@ -1,17 +1,5 @@
 # TODO
 
-## Warn when the departure is beyond the wind forecast
-
-NWS hourly forecasts cover about a week. `interpolateWind` in `src/services/nws.ts` falls back to the nearest forecast hour when none covers the requested time, so a trip three weeks out gets the last forecast hour's wind applied to every segment. `WeatherSection` and `FloatPlanCard` show that same hour's forecast with no caveat.
-
-Wanted: no wind effect when the time is out of range, plus a notice telling the user that weather isn't being accounted for because the date is too far out.
-
-To decide when building it:
-
-- Past dates hit the same fallback.
-- The weather panel and the share card use the same function, so both need the notice, not only the timing maths.
-- A trip can start inside the forecast range and end outside it.
-
 ## Deduplicate graph edges
 
 `navigator_offline/src/main.rs` writes every neighbour pair in both directions, and `Router::new` in `navigator_core/src/lib.rs` adds both directions again, so each neighbour is stored twice.
@@ -42,10 +30,6 @@ Limit: if both channels resolve to the same station, the model cannot tell them 
 No harmful side effects today. More segments means currents are sampled more often, and stations are fetched once each. Either honour the cap or rename the parameter.
 
 ## Bugs
-
-### A NOAA failure silently drops currents
-
-When `fetchTidalData` fails, the catch in `fetchTides` (`MapView.tsx:331`) logs to the console and sets the cache to null. The panel then shows a plain distance-over-speed estimate with no notice that tides and wind are missing.
 
 ### Stale numbers while tides reload
 

@@ -43,6 +43,14 @@ export default function TripSummary({
               ⚠
             </span>
           )}
+          {(summary.effectsUnavailable || summary.wind.kind !== "full") && (
+            <span
+              className="mr-1 text-amber-600"
+              title={summary.effectsUnavailable ? "Tides and wind not included" : "Wind not fully included"}
+            >
+              ⚠
+            </span>
+          )}
           <span className="text-muted-foreground">Leave </span>
           <span className="font-medium">{formatClock(departure, timezone)}</span>
           {summary.hasRoute && (

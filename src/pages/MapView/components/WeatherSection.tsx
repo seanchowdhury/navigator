@@ -1,9 +1,25 @@
 import { ArrowUp } from "lucide-react";
-import { WindForecast, weatherEmoji } from "../../../services/nws";
+import { Weather, weatherEmoji } from "../../../services/nws";
 import { degreesToCompass } from "../../../lib/format";
+import { formatDay } from "../../../lib/time";
 import Section from "./Section";
 
-export default function WeatherSection({ weather }: { weather: WindForecast | null }) {
+/** Why the panel has no forecast for the departure time. */
+function unavailableMessage(state: Extract<Weather, { status: "unavailable" }>, timezone: string) {
+  switch (state.reason) {
+    case "failed":
+      return "Couldn't load the forecast.";
+    case "beforeForecast":
+      return "No forecast for times already past.";
+    case "beyondForecast":
+      return state.forecastEnd
+        ? `No forecast this far out yet; it runs to ${formatDay(state.forecastEnd, timezone)}.`
+        : "No forecast this far out yet.";
+  }
+}
+
+export default function WeatherSection({ weather: state, timezone }: { weather: Weather; timezone: string }) {
+  const weather = state.status === "ready" ? state.forecast : null;
   return (
     <Section title="Weather">
       {weather ? (
@@ -39,6 +55,8 @@ export default function WeatherSection({ weather }: { weather: WindForecast | nu
             </span>
           </div>
         </>
+      ) : state.status === "unavailable" ? (
+        <div className="text-xs text-muted-foreground">{unavailableMessage(state, timezone)}</div>
       ) : (
         <div className="text-xs text-muted-foreground italic">Loading weather...</div>
       )}

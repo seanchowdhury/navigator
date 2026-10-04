@@ -193,8 +193,10 @@ export default function FloatPlanCard({
             )}
             {tidalResult && !tidalLoading && (
               <div className="text-muted-foreground">
-                Current {formatMinutesDelta(tidalResult.tideDeltaMinutes)} · Wind{" "}
-                {formatMinutesDelta(tidalResult.windDeltaMinutes)} on the trip
+                Current {formatMinutesDelta(tidalResult.tideDeltaMinutes)}
+                {/* No wind figure when wind wasn't counted at all (the notice below says why). */}
+                {summary.wind.kind !== "none" && ` · Wind ${formatMinutesDelta(tidalResult.windDeltaMinutes)}`} on the
+                trip
               </div>
             )}
           </div>

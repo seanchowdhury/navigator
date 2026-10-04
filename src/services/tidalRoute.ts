@@ -5,7 +5,14 @@ import {
   fetchCurrentStations,
   stationsNear,
 } from "./noaa";
-import { fetchWindForecast, interpolateWind, WindForecast } from "./nws";
+import {
+  fetchWindForecast,
+  forecastAt,
+  forecastEnd,
+  noForecastReason,
+  NoForecastReason,
+  WindForecast,
+} from "./nws";
 import { NonTidalArea, nonTidalAreaAt } from "../regions";
 
 export type VesselType = "kayak" | "scull" | "whitehall_gig";
@@ -63,7 +70,22 @@ export interface TidalRouteResult {
   stalls: TidalSegment[];
   /** Some segments had no usable NOAA station nearby and assume no current. */
   missingCurrentData: boolean;
+  /** How much of the trip the wind forecast covers. */
+  wind: WindCoverage;
 }
+
+/**
+ * Whether the trip's segments had a wind forecast. Segments without one are
+ * timed with no wind, which the plan has to say rather than pass off as calm.
+ */
+export type WindCoverage =
+  | { kind: "full" }
+  | {
+      /** "partial": some segments have a forecast (the trip runs off one end of it). */
+      kind: "partial" | "none";
+      reason: NoForecastReason;
+      forecastEnd: Date | null;
+    };
 
 export interface ItineraryStop {
   waypointIndex: number;
@@ -102,7 +124,8 @@ export interface TidalRouteCache {
   /** Length (nm) of the full route between each pair of simplified points. */
   segmentDistancesNm: number[];
   predictions: Map<string, CurrentPrediction[]>;
-  windForecasts: WindForecast[];
+  /** Hourly, at the route's midpoint. Null if the request failed. */
+  windForecasts: WindForecast[] | null;
   /** Where each segment's current comes from (outbound order; the return reuses it). */
   segmentCurrents: CurrentSource[];
 }
@@ -188,7 +211,10 @@ export async function fetchTidalData(
 
   const [segmentCurrents, windForecasts] = await Promise.all([
     Promise.all(simplified.slice(1).map((to, i) => resolveSegmentCurrent(simplified[i], to))),
-    fetchWindForecast(windLat, windLng).catch((): WindForecast[] => []),
+    fetchWindForecast(windLat, windLng).catch((e): WindForecast[] | null => {
+      console.warn("Wind forecast unavailable:", e);
+      return null;
+    }),
   ]);
 
   return {
@@ -276,6 +302,8 @@ export function recomputeTidalRoute(
   let tideOnlyDelta = 0;
   let stopHours = 0;
   let stalledSoFar = false;
+  let segmentsWithoutWind = 0;
+  let firstWithoutWind: Date | null = null;
 
   for (const { from, to, distanceNm, direction, endWaypoints, current } of legs) {
     // Bearing uses the straight chord; distance follows the actual route.
@@ -298,12 +326,17 @@ export function recomputeTidalRoute(
       currentComponent = currentSpeed * Math.cos(angleDiff);
     }
 
+    // No forecast for this time (too far out, already past, or the request
+    // failed): no wind effect, and the result says so.
     let windEffect = 0;
-    const wind = interpolateWind(windForecasts, new Date(currentTime));
+    const wind = windForecasts ? forecastAt(windForecasts, new Date(currentTime)) : null;
     if (wind) {
       const windPushDir = (wind.directionDeg + 180) % 360;
       const windAngleDiff = toRad(windPushDir - segmentBearing);
       windEffect = wind.speedKnots * WIND_DRAG[vesselType] * Math.cos(windAngleDiff);
+    } else {
+      segmentsWithoutWind++;
+      firstWithoutWind ??= new Date(currentTime);
     }
 
     const netSpeed = vesselSpeedKnots + currentComponent + windEffect;
@@ -358,6 +391,14 @@ export function recomputeTidalRoute(
   const tideDeltaMinutes = tideOnlyDelta * 60;
   const windDeltaMinutes = (totalDelta - tideOnlyDelta) * 60;
 
+  const windCoverage: WindCoverage = firstWithoutWind
+    ? {
+        kind: segmentsWithoutWind === segments.length ? "none" : "partial",
+        reason: noForecastReason(windForecasts, firstWithoutWind),
+        forecastEnd: forecastEnd(windForecasts),
+      }
+    : { kind: "full" };
+
   return {
     segments,
     totalDurationHours: movingHours + stopHours,
@@ -370,6 +411,7 @@ export function recomputeTidalRoute(
     itinerary,
     stalls: segments.filter((s) => s.stalled),
     missingCurrentData: segmentCurrents.some((c) => c.kind === "unavailable"),
+    wind: windCoverage,
   };
 }
 

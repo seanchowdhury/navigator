@@ -22,6 +22,8 @@ interface RouteSectionProps {
   timezone: string;
   /** Region notes the route passes near (e.g. locks). */
   routeNotes: RouteNote[];
+  /** Fetches tide and wind data again after a failure. */
+  onRetryTides: () => void;
   onClear: () => void;
   onUndo: () => void;
   onShare: () => void;
@@ -38,6 +40,7 @@ export default function RouteSection({
   departure,
   timezone,
   routeNotes,
+  onRetryTides,
   onClear,
   onUndo,
   onShare,
@@ -50,6 +53,7 @@ export default function RouteSection({
     tideDeltaMinutes: tideDelta,
     windDeltaMinutes: windDelta,
     isLowerBound,
+    wind,
   } = summary;
   const durationPrefix = isLowerBound ? "≥ " : "";
 
@@ -112,22 +116,27 @@ export default function RouteSection({
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Wind Effect</span>
-            <span
-              className={`font-medium ${windDelta < 0 ? "text-green-600" : windDelta > 0 ? "text-red-500" : ""}`}
-            >
-              {windDelta > 0 ? "+" : ""}
-              {Math.round(windDelta)}m
-            </span>
+            {wind.kind === "none" ? (
+              // Not "0m": wind wasn't counted at all (see the notice below).
+              <span className="font-medium text-muted-foreground">—</span>
+            ) : (
+              <span
+                className={`font-medium ${windDelta < 0 ? "text-green-600" : windDelta > 0 ? "text-red-500" : ""}`}
+              >
+                {windDelta > 0 ? "+" : ""}
+                {Math.round(windDelta)}m
+              </span>
+            )}
           </div>
-          {tidalResult.missingCurrentData && (
-            <p className="text-xs text-muted-foreground">
-              No current predictions near part of this route; those stretches assume no current.
-            </p>
-          )}
         </>
       )}
 
-      <RouteWarnings summary={summary} routeNotes={routeNotes} timezone={timezone} />
+      <RouteWarnings
+        summary={summary}
+        routeNotes={routeNotes}
+        timezone={timezone}
+        onRetryEffects={onRetryTides}
+      />
 
       <Button size="sm" className="mt-2 w-full" onClick={onShare}>
         <Share />

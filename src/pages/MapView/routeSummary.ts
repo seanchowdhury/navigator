@@ -1,4 +1,4 @@
-import { TidalRouteResult, TidalSegment } from "../../services/tidalRoute";
+import { TidalRouteResult, TidalSegment, WindCoverage } from "../../services/tidalRoute";
 import { Waypoint } from "./MapView.types";
 
 function getTravelHours(meters: number, knots: number) {
@@ -39,6 +39,8 @@ export interface RouteSummaryInput {
   totalDistance: number;
   tidalResult: TidalRouteResult | null;
   tidalLoading: boolean;
+  /** The tide/wind fetch failed, so there's no tidalResult to use. */
+  tidalFailed: boolean;
   speedKnots: number;
   roundTrip: boolean;
   waypoints: Waypoint[];
@@ -60,6 +62,12 @@ export interface RouteSummary {
   worstFirstStall: TidalSegment | undefined;
   /** When the boat can't make headway, durations are a lower bound, not an estimate. */
   isLowerBound: boolean;
+  /** Tide and wind data couldn't be loaded; the timings assume still water and no wind. */
+  effectsUnavailable: boolean;
+  /** Some stretches have no current predictions nearby and assume no current. */
+  missingCurrentData: boolean;
+  /** How much of the trip the wind forecast covers. */
+  wind: WindCoverage;
 }
 
 /** Derives the trip totals shown in the float plan from the route and tidal result. */
@@ -67,6 +75,7 @@ export function summarizeRoute({
   totalDistance,
   tidalResult,
   tidalLoading,
+  tidalFailed,
   speedKnots,
   roundTrip,
   waypoints,
@@ -79,8 +88,9 @@ export function summarizeRoute({
   const durationHours =
     tidalResult?.totalDurationHours ??
     getTravelHours(tripDistance, speedKnots) + fallbackStopHours;
-  const stallStretches =
-    tidalResult && !tidalLoading ? getStallStretches(tidalResult.segments) : [];
+  // While a fetch is in flight the result is for the previous route or date.
+  const settled = tidalResult && !tidalLoading ? tidalResult : null;
+  const stallStretches = settled ? getStallStretches(settled.segments) : [];
 
   return {
     hasRoute: totalDistance > 0,
@@ -93,5 +103,8 @@ export function summarizeRoute({
     stallStretches,
     worstFirstStall: stallStretches[0]?.reduce((a, b) => (b.netSpeed < a.netSpeed ? b : a)),
     isLowerBound: stallStretches.length > 0,
+    effectsUnavailable: tidalFailed,
+    missingCurrentData: settled?.missingCurrentData ?? false,
+    wind: settled?.wind ?? { kind: "full" },
   };
 }

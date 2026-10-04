@@ -118,24 +118,35 @@ function compassToDegrees(dir: string): number {
   return map[dir] ?? 0;
 }
 
-export function interpolateWind(
-  forecasts: WindForecast[],
-  time: Date,
-): WindForecast | null {
-  if (forecasts.length === 0) return null;
+const HOUR_MS = 3600_000;
 
+/**
+ * The hourly forecast covering `time`, or null if none does. The forecast runs
+ * about a week ahead and has nothing for hours already past; a time outside it
+ * gets no forecast rather than the nearest one.
+ */
+export function forecastAt(forecasts: WindForecast[], time: Date): WindForecast | null {
   const t = time.getTime();
-  // Hourly forecasts — find the one covering this time
-  for (const f of forecasts) {
-    if (f.time.getTime() <= t && t < f.time.getTime() + 3600_000) {
-      return f;
-    }
-  }
-
-  // Return nearest
-  return forecasts.reduce((closest, f) =>
-    Math.abs(f.time.getTime() - t) < Math.abs(closest.time.getTime() - t)
-      ? f
-      : closest,
-  );
+  return forecasts.find((f) => f.time.getTime() <= t && t < f.time.getTime() + HOUR_MS) ?? null;
 }
+
+/** Why there's no forecast for a time. */
+export type NoForecastReason = "beforeForecast" | "beyondForecast" | "failed";
+
+/** Why `forecastAt` has nothing for `time`. `forecasts` is null if the request failed. */
+export function noForecastReason(forecasts: WindForecast[] | null, time: Date): NoForecastReason {
+  if (!forecasts || forecasts.length === 0) return "failed";
+  return time.getTime() < forecasts[0].time.getTime() ? "beforeForecast" : "beyondForecast";
+}
+
+/** When the forecast runs out, or null if there isn't one. */
+export function forecastEnd(forecasts: WindForecast[] | null): Date | null {
+  const last = forecasts?.[forecasts.length - 1];
+  return last ? new Date(last.time.getTime() + HOUR_MS) : null;
+}
+
+/** The forecast for the weather panel: the departure hour at the start of the route. */
+export type Weather =
+  | { status: "loading" }
+  | { status: "ready"; forecast: WindForecast }
+  | { status: "unavailable"; reason: NoForecastReason; forecastEnd: Date | null };
