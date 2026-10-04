@@ -27,8 +27,10 @@ import {
 } from "../../services/tidalRoute";
 import {
   fetchWindForecast,
-  interpolateWind,
-  WindForecast,
+  forecastAt,
+  forecastEnd,
+  noForecastReason,
+  Weather,
 } from "../../services/nws";
 import {
   DEFAULT_REGION,
@@ -231,6 +233,8 @@ export default function MapView() {
   // Distance of each routed leg, so undo can take the last one off totalDistance.
   const legDistancesRef = useRef<number[]>([]);
   const [tidalLoading, setTidalLoading] = useState(false);
+  /** The last tide/wind fetch failed, so the timings include neither. */
+  const [tidalFailed, setTidalFailed] = useState(false);
 
   // --- Regions ---
   // A route belongs to the region its first waypoint is in; otherwise the region
@@ -255,7 +259,7 @@ export default function MapView() {
     toDateInputValue(new Date(), DEFAULT_REGION.timezone),
   );
   const [vesselType, setVesselType] = useState<VesselType>("whitehall_gig");
-  const [weather, setWeather] = useState<WindForecast | null>(null);
+  const [weather, setWeather] = useState<Weather>({ status: "loading" });
   const [roundTrip, setRoundTrip] = useState(false);
 
   /** The departure instant: the entered date and time on the region's wall clock. */
@@ -302,10 +306,21 @@ export default function MapView() {
     let cancelled = false;
     fetchWindForecast(weatherLat, weatherLng)
       .then((forecasts) => {
-        if (!cancelled) setWeather(interpolateWind(forecasts, new Date(departureMs)));
+        if (cancelled) return;
+        const at = new Date(departureMs);
+        const forecast = forecastAt(forecasts, at);
+        setWeather(
+          forecast
+            ? { status: "ready", forecast }
+            : {
+                status: "unavailable",
+                reason: noForecastReason(forecasts, at),
+                forecastEnd: forecastEnd(forecasts),
+              },
+        );
       })
       .catch(() => {
-        if (!cancelled) setWeather(null);
+        if (!cancelled) setWeather({ status: "unavailable", reason: "failed", forecastEnd: null });
       });
     return () => {
       cancelled = true;
@@ -323,6 +338,7 @@ export default function MapView() {
     // Ignore responses from fetches that a newer one has superseded.
     const fetchId = ++fetchIdRef.current;
     setTidalLoading(true);
+    setTidalFailed(false);
     try {
       // Predictions start at local midnight of the departure date in the region.
       const dayStart = zonedDateTime(dateStr, "00:00", region.timezone);
@@ -330,7 +346,10 @@ export default function MapView() {
       if (fetchId === fetchIdRef.current) setTidalCache(cache);
     } catch (e) {
       console.error("Tidal calculation failed:", e);
-      if (fetchId === fetchIdRef.current) setTidalCache(null);
+      if (fetchId === fetchIdRef.current) {
+        setTidalCache(null);
+        setTidalFailed(true);
+      }
     } finally {
       if (fetchId === fetchIdRef.current) setTidalLoading(false);
     }
@@ -929,6 +948,7 @@ export default function MapView() {
     fetchIdRef.current++; // drop any in-flight tide fetch
     setTidalCache(null);
     setTidalLoading(false);
+    setTidalFailed(false);
     routeCoordsRef.current = [];
     waypointCoordIndicesRef.current = [];
     legDistancesRef.current = [];
@@ -1022,6 +1042,7 @@ export default function MapView() {
       fetchIdRef.current++; // drop any in-flight tide fetch
       setTidalCache(null);
       setTidalLoading(false);
+      setTidalFailed(false);
     } else {
       // The route before this leg ended at the previous waypoint's index.
       routeCoordsRef.current = routeCoordsRef.current.slice(0, indices[indices.length - 2] + 1);
@@ -1094,6 +1115,7 @@ export default function MapView() {
             totalDistance,
             tidalResult,
             tidalLoading,
+            tidalFailed,
             speedKnots,
             roundTrip,
             waypoints,
@@ -1105,7 +1127,7 @@ export default function MapView() {
           roundTrip={roundTrip}
           departure={departure}
           timezone={timezone}
-          weather={weather}
+          weather={weather.status === "ready" ? weather.forecast : null}
           routeNotes={routeNotes}
           onDone={stopSharing}
           image={shareImage}
@@ -1121,6 +1143,10 @@ export default function MapView() {
           onShare={() => setSharing(true)}
           tidalResult={tidalResult}
           tidalLoading={tidalLoading}
+          tidalFailed={tidalFailed}
+          onRetryTides={() =>
+            fetchTides(routeCoordsRef.current, waypointCoordIndicesRef.current, departureDate, activeRegion)
+          }
           speedKnots={speedKnots}
           onSpeedChange={(speed) => {
             setSpeedKnots(speed);

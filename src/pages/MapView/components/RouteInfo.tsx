@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DepartureSweep, TidalRouteResult, VesselType } from "../../../services/tidalRoute";
-import { WindForecast } from "../../../services/nws";
+import { Weather } from "../../../services/nws";
 import { Waypoint } from "../MapView.types";
 import { summarizeRoute } from "../routeSummary";
 import { Region, RouteNote } from "../../../regions";
@@ -23,6 +23,10 @@ interface RouteInfoProps {
   onShare: () => void;
   tidalResult: TidalRouteResult | null;
   tidalLoading: boolean;
+  /** The tide/wind fetch failed. */
+  tidalFailed: boolean;
+  /** Fetches tide and wind data for the current route again. */
+  onRetryTides: () => void;
   speedKnots: number;
   onSpeedChange: (speed: number) => void;
   departureTime: string;
@@ -31,7 +35,7 @@ interface RouteInfoProps {
   onDepartureDateChange: (date: string) => void;
   vesselType: VesselType;
   onVesselTypeChange: (vessel: VesselType) => void;
-  weather: WindForecast | null;
+  weather: Weather;
   onSweepDepartures: (windowStart: string, windowEnd: string) => DepartureSweep | null;
   roundTrip: boolean;
   onRoundTripChange: (roundTrip: boolean) => void;
@@ -55,6 +59,8 @@ export default function RouteInfo({
   onShare,
   tidalResult,
   tidalLoading,
+  tidalFailed,
+  onRetryTides,
   speedKnots,
   onSpeedChange,
   departureTime,
@@ -80,6 +86,7 @@ export default function RouteInfo({
     totalDistance,
     tidalResult,
     tidalLoading,
+    tidalFailed,
     speedKnots,
     roundTrip,
     waypoints,
@@ -120,7 +127,7 @@ export default function RouteInfo({
         speedKnots={speedKnots}
         onSpeedChange={onSpeedChange}
       />
-      <WeatherSection weather={weather} />
+      <WeatherSection weather={weather} timezone={timezone} />
       {summary.hasRoute && (
         <RouteSection
           summary={summary}
@@ -133,6 +140,7 @@ export default function RouteInfo({
           departure={departure}
           timezone={timezone}
           routeNotes={routeNotes}
+          onRetryTides={onRetryTides}
           onClear={onClear}
           onUndo={onUndo}
           onShare={onShare}
