@@ -31,10 +31,6 @@ No harmful side effects today. More segments means currents are sampled more oft
 
 ## Bugs
 
-### Stale numbers while tides reload
-
-After a new waypoint or a date change, the previous `tidalCache` stays in use until the new fetch returns. Duration, arrival and distance belong to the previous route or date in the meantime. The only signal is a small "Calculating effects..." line in `RouteSection`; the collapsed mobile sheet (`TripSummary`) shows nothing.
-
 ### `formatDuration` can print "1h 60m"
 
 `src/lib/format.ts` floors the hours and then rounds the minutes, so 1.995 h gives "1h 60m" and 0.995 h gives "60m".

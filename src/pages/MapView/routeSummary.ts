@@ -62,6 +62,8 @@ export interface RouteSummary {
   worstFirstStall: TidalSegment | undefined;
   /** When the boat can't make headway, durations are a lower bound, not an estimate. */
   isLowerBound: boolean;
+  /** Tide and wind data is on its way; until then the timings are the still-water estimate. */
+  effectsLoading: boolean;
   /** Tide and wind data couldn't be loaded; the timings assume still water and no wind. */
   effectsUnavailable: boolean;
   /** Some stretches have no current predictions nearby and assume no current. */
@@ -103,6 +105,7 @@ export function summarizeRoute({
     stallStretches,
     worstFirstStall: stallStretches[0]?.reduce((a, b) => (b.netSpeed < a.netSpeed ? b : a)),
     isLowerBound: stallStretches.length > 0,
+    effectsLoading: tidalLoading,
     effectsUnavailable: tidalFailed,
     missingCurrentData: settled?.missingCurrentData ?? false,
     wind: settled?.wind ?? { kind: "full" },

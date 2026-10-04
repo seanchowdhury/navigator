@@ -65,7 +65,9 @@ export default function TripSummary({
         </div>
         <div className="text-muted-foreground">
           {summary.hasRoute
-            ? `${formatDistance(summary.displayDistance)} · ${prefix}${formatDuration(summary.durationHours)}`
+            ? `${formatDistance(summary.displayDistance)} · ${prefix}${formatDuration(summary.durationHours)}${
+                summary.effectsLoading ? " · calculating…" : ""
+              }`
             : waypointCount === 0
               ? "Tap the water to start a route."
               : "Tap the water to add the next waypoint."}

@@ -177,7 +177,7 @@ export default function FloatPlanCard({
           </ol>
         )}
 
-        {(weather || tidalResult) && (
+        {(weather || tidalResult || tidalLoading) && (
           <div className="flex flex-col gap-0.5 text-sm">
             {weather && (
               <div>
@@ -191,6 +191,7 @@ export default function FloatPlanCard({
                 {weather.windDirectionLabel || degreesToCompass(weather.directionDeg)}
               </div>
             )}
+            {tidalLoading && <div className="text-muted-foreground italic">Calculating tides and wind…</div>}
             {tidalResult && !tidalLoading && (
               <div className="text-muted-foreground">
                 Current {formatMinutesDelta(tidalResult.tideDeltaMinutes)}
