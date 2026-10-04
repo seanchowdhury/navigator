@@ -339,6 +339,10 @@ export default function MapView() {
     const fetchId = ++fetchIdRef.current;
     setTidalLoading(true);
     setTidalFailed(false);
+    // The cached data is for the previous route or date. Drop it rather than
+    // time the new trip with it; until the fetch lands the plan shows the
+    // still-water estimate, and the best-departure sweep and stall overlay wait.
+    setTidalCache(null);
     try {
       // Predictions start at local midnight of the departure date in the region.
       const dayStart = zonedDateTime(dateStr, "00:00", region.timezone);
@@ -970,7 +974,8 @@ export default function MapView() {
   // Capturing up front matters: browsers only open the share sheet straight from
   // a tap, with no time to render an image in between.
   useEffect(() => {
-    if (!sharing || !routeMap || shareCardHeight === 0) return;
+    // Not while tides are loading: the image would keep the interim estimate.
+    if (!sharing || !routeMap || shareCardHeight === 0 || tidalLoading) return;
     const coords = routeCoordsRef.current as [number, number][];
     if (coords.length === 0) return;
     const bounds = coords.reduce(
@@ -1004,7 +1009,7 @@ export default function MapView() {
     return () => {
       cancelled = true;
     };
-  }, [sharing, routeMap, shareCardHeight]);
+  }, [sharing, routeMap, shareCardHeight, tidalLoading]);
 
   function stopSharing() {
     // The sheet sets its own padding again when it comes back.
